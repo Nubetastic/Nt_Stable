@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stable Horse</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main id="horse-window" class="horse-window" aria-hidden="true">
+        <section class="horse-card">
+            <header>
+                <div>
+                    <p class="eyebrow">Stable Horse</p>
+                    <h1 id="breed">Horse</h1>
+                </div>
+                <div class="header-controls">
+                    <label class="scale-control">
+                        <span>Scale</span>
+                        <input id="ui-scale" data-ui-scale type="range" min="0.50" max="2.00" step="0.05" value="1.00" aria-label="Scale interface">
+                        <output data-scale-value>100%</output>
+                    </label>
+                    <button id="close" class="close-button" type="button" aria-label="Close">&times;</button>
+                </div>
+            </header>
+
+            <div class="summary">
+                <div><span>Breed</span><strong id="breed-summary"></strong></div>
+                <div><span>Tame Level</span><strong id="tame-level"></strong></div>
+            </div>
+
+            <h2>Stats</h2>
+            <div class="stats">
+                <div><span>Health</span><strong id="health"></strong></div>
+                <div><span>Stamina</span><strong id="stamina"></strong></div>
+                <div><span>Agility</span><strong id="agility"></strong></div>
+                <div><span>Speed</span><strong id="speed"></strong></div>
+                <div><span>Acceleration</span><strong id="acceleration"></strong></div>
+                <div><span>Strength</span><strong id="strength"></strong></div>
+            </div>
+
+            <div class="weights">
+                <div><span>Carry Weight</span><strong id="carry-weight"></strong></div>
+                <div><span>Pull Weight</span><strong id="pull-weight"></strong></div>
+            </div>
+
+            <div class="price-row">
+                <span>Buy Price</span>
+                <strong id="price"></strong>
+            </div>
+
+            <footer>
+                <button id="leave" class="secondary" type="button">Leave</button>
+                <button id="buy" class="primary" type="button">Buy</button>
+            </footer>
+
+            <div id="buy-modal" class="manage-modal" hidden>
+                <div class="modal-content">
+                    <h2>Purchase Horse</h2>
+                    <label>
+                        <span>Horse Name</span>
+                        <input id="buy-name" type="text" maxlength="32" autocomplete="off">
+                    </label>
+                    <div class="form-field">
+                        <span>Gender</span>
+                        <div class="gender-buttons">
+                            <button class="active" type="button" data-buy-gender="male">Gelding</button>
+                            <button type="button" data-buy-gender="female">Mare</button>
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button id="buy-cancel" type="button">Cancel</button>
+                        <button id="buy-confirm" class="primary" type="button">Buy</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <main id="manage-window" class="manage-window" aria-hidden="true">
+        <section class="manage-card">
+            <header>
+                <div>
+                    <p id="manage-eyebrow" class="eyebrow">Stable Management</p>
+                    <h1 id="manage-title">Manage Stable</h1>
+                </div>
+                <div class="header-controls">
+                    <label class="scale-control">
+                        <span>Scale</span>
+                        <input id="manage-ui-scale" data-ui-scale type="range" min="0.50" max="2.00" step="0.05" value="1.00" aria-label="Scale interface">
+                        <output data-scale-value>100%</output>
+                    </label>
+                    <button id="manage-close" class="close-button" type="button" aria-label="Close">&times;</button>
+                </div>
+            </header>
+
+            <label class="camera-zoom">
+                <span>Camera Zoom</span>
+                <input id="camera-zoom" type="range" min="0" max="100" step="1" value="50">
+            </label>
+            <p id="camera-help" class="camera-help">Hold right mouse and drag in any direction to orbit around the horse.</p>
+
+            <div class="stable-slot-sections" data-manage-main>
+                <div class="stable-balance-row">
+                    <span>Stable Debt</span>
+                    <strong id="stable-debt">$0.00</strong>
+                </div>
+
+                <section class="stable-slot-section">
+                    <div class="stable-slot-heading">
+                        <h2>Horse Slots</h2>
+                        <span id="horse-slot-count"></span>
+                    </div>
+                    <div id="horse-list" class="slot-list"></div>
+                    <div class="slot-actions">
+                        <button id="buy-horse-slot" type="button">Buy Horse Slot</button>
+                        <button id="sell-horse-slot" class="danger" type="button" hidden>Sell Empty Slot</button>
+                    </div>
+                </section>
+
+                <section class="stable-slot-section">
+                    <div class="stable-slot-heading">
+                        <h2>Wagon Slots</h2>
+                        <span id="wagon-slot-count"></span>
+                    </div>
+                    <div id="wagon-list" class="slot-list"></div>
+                    <div class="slot-actions">
+                        <button id="buy-wagon-slot" type="button">Buy Wagon Slot</button>
+                        <button id="sell-wagon-slot" class="danger" type="button" hidden>Sell Empty Slot</button>
+                    </div>
+                </section>
+            </div>
+
+            <div class="managed-selection" data-manage-main data-owned-horse>
+                <span>Selected Horse</span>
+                <strong id="managed-horse-name"></strong>
+                <small id="managed-horse-breed"></small>
+            </div>
+
+            <div class="managed-selection" data-manage-main data-owned-wagon hidden>
+                <span>Selected Wagon</span>
+                <strong id="managed-wagon-name"></strong>
+                <small id="managed-wagon-model"></small>
+            </div>
+
+            <div class="manage-actions" data-manage-main data-owned-horse>
+                <button type="button" data-horse-action="setRiding">Set Riding Horse</button>
+                <button type="button" data-horse-action="customize">Customize Horse</button>
+                <button type="button" data-horse-action="stats">Horse Stats</button>
+                <button type="button" data-horse-action="rename">Rename Horse</button>
+                <button class="danger" type="button" data-horse-action="sell">Sell Horse</button>
+            </div>
+
+            <div class="manage-actions" data-manage-main data-owned-wagon hidden>
+                <button type="button" data-wagon-action="setRiding">Set Active Wagon</button>
+                <button type="button" data-wagon-action="assignHorses">Assign Horses</button>
+                <button type="button" data-wagon-action="customize">Customize Wagon</button>
+                <button type="button" data-wagon-action="stats">Wagon Stats</button>
+                <button type="button" data-wagon-action="rename">Rename Wagon</button>
+                <button class="danger" type="button" data-wagon-action="sell">Sell Wagon</button>
+            </div>
+
+            <footer data-manage-main>
+                <button id="manage-leave" class="secondary" type="button">Leave</button>
+            </footer>
+
+            <div id="wagon-horses-panel" hidden>
+                <div class="customize-horse-summary">
+                    <strong id="wagon-horses-title">Assign Horses</strong>
+                    <span>Select a horse slot, then choose a horse.</span>
+                </div>
+                <div id="wagon-horse-list" class="wagon-horse-list"></div>
+                <div id="wagon-horse-diagram" class="wagon-horse-diagram">
+                    <img class="wagon-diagram-image" src="imgs/Wagon.png" alt="Wagon">
+                </div>
+                <p id="wagon-horse-help" class="customize-help">Select a wagon horse slot.</p>
+                <div class="customize-actions">
+                    <button id="wagon-horses-back" type="button">Back</button>
+                </div>
+            </div>
+
+            <div id="customize-panel" hidden>
+                <div class="customize-horse-summary">
+                    <strong id="customize-horse-name"></strong>
+                    <span id="customize-horse-details"></span>
+                </div>
+                <p class="customize-help">Choose a customization category.</p>
+                <div id="customize-menu" class="customize-menu"></div>
+                <div id="component-customize-panel" hidden>
+                    <button id="component-customize-back" class="customize-back" type="button">Back</button>
+                    <h2 id="component-customize-title">Horse Customization</h2>
+                    <div id="customize-categories" class="customize-categories"></div>
+                    <div class="saddle-colors">
+                        <label class="customize-category">
+                            <span>Color Channel 1</span><output data-component-tint-value="tint0"></output>
+                            <input data-component-tint="tint0" type="range" min="0" max="255" step="1">
+                        </label>
+                        <label class="customize-category">
+                            <span>Color Channel 2</span><output data-component-tint-value="tint1"></output>
+                            <input data-component-tint="tint1" type="range" min="0" max="255" step="1">
+                        </label>
+                        <label class="customize-category">
+                            <span>Color Channel 3</span><output data-component-tint-value="tint2"></output>
+                            <input data-component-tint="tint2" type="range" min="0" max="255" step="1">
+                        </label>
+                    </div>
+                </div>
+                <div id="customize-price-row" class="customize-price-row">
+                    <span>Customization Cost</span>
+                    <strong id="customize-price"></strong>
+                </div>
+                <div class="customize-actions">
+                    <button id="customize-cancel" type="button">Cancel</button>
+                    <button id="customize-save" class="primary" type="button">Save Customization</button>
+                </div>
+            </div>
+
+            <div id="wagon-customize-panel" hidden>
+                <div class="customize-horse-summary">
+                    <strong id="wagon-customize-title">Buy Wagon</strong>
+                    <span id="wagon-customize-description"></span>
+                </div>
+                <div id="wagon-model-browser">
+                    <span class="wagon-browser-label">Wagon Models</span>
+                    <div id="wagon-model-list" class="wagon-model-list"></div>
+                </div>
+                <div id="wagon-horses-needed" class="wagon-horses-needed">
+                    <span>Horses Needed:</span>
+                    <strong id="wagon-horses-needed-count"></strong>
+                    <small id="wagon-horses-needed-warning">Not enough horses</small>
+                </div>
+                <label class="form-field">
+                    <span>Wagon Name</span>
+                    <input id="wagon-name" type="text" maxlength="32" autocomplete="off">
+                </label>
+                <div class="wagon-customize-options">
+                    <label class="customize-category">
+                        <span>Livery</span><output id="wagon-livery-value"></output>
+                        <input id="wagon-livery" type="range" min="0" step="1">
+                    </label>
+                    <label class="customize-category">
+                        <span>Tint</span><output id="wagon-tint-value"></output>
+                        <input id="wagon-tint" type="range" min="0" step="1">
+                    </label>
+                    <label id="wagon-lantern-option" class="customize-category">
+                        <span>Lantern Style</span><output id="wagon-lantern-value"></output>
+                        <input id="wagon-lantern" type="range" min="0" step="1">
+                    </label>
+                    <div id="wagon-extra-option" class="customize-category">
+                        <span>Extra</span><output id="wagon-extra-value"></output>
+                        <input id="wagon-extra" type="range" min="0" step="1">
+                        <label class="wagon-extra-toggle">
+                            <input id="wagon-extra-enabled" type="checkbox">
+                            <span>Add to Wagon</span>
+                        </label>
+                        <div id="wagon-extra-list" class="wagon-extra-list"></div>
+                    </div>
+                </div>
+                <p class="customize-help">Browse each extra and enable any combination you want. Enabled extras are listed below the slider.</p>
+                <div id="wagon-price-row" class="customize-price-row">
+                    <span id="wagon-price-label">Purchase Price</span>
+                    <strong id="wagon-price"></strong>
+                </div>
+                <div class="customize-actions">
+                    <button id="wagon-customize-cancel" type="button">Cancel</button>
+                    <button id="wagon-customize-save" class="primary" type="button">Buy Wagon</button>
+                </div>
+            </div>
+
+            <div id="rename-modal" class="manage-modal" hidden>
+                <div class="modal-content">
+                    <h2 id="rename-title">Rename Horse</h2>
+                    <label>
+                        <span id="rename-label">Horse Name</span>
+                        <input id="rename-input" type="text" maxlength="32" autocomplete="off">
+                    </label>
+                    <div class="modal-actions">
+                        <button id="rename-cancel" type="button">Cancel</button>
+                        <button id="rename-confirm" class="primary" type="button">Rename</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="sell-modal" class="manage-modal" hidden>
+                <div class="modal-content">
+                    <h2 id="sell-title">Sell Horse</h2>
+                    <p>Sell <strong id="sell-object-name"></strong> for <strong id="sell-price"></strong>?</p>
+                    <p class="danger-text">This cannot be undone.</p>
+                    <div class="modal-actions">
+                        <button id="sell-cancel" type="button">Cancel</button>
+                        <button id="sell-confirm" class="danger" type="button">Confirm Sale</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="riding-warning-modal" class="manage-modal" hidden>
+                <div class="modal-content">
+                    <h2>Set Riding Horse</h2>
+                    <p><strong id="riding-warning-name"></strong> will be removed from every wagon it is assigned to.</p>
+                    <div class="modal-actions">
+                        <button id="riding-warning-cancel" type="button">Cancel</button>
+                        <button id="riding-warning-confirm" class="primary" type="button">Set Riding Horse</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="wagon-stats-modal" class="manage-modal" hidden>
+                <div class="modal-content">
+                    <h2 id="wagon-stats-name">Wagon Stats</h2>
+                    <p id="wagon-stats-description"></p>
+                    <div class="wagon-stats-grid">
+                        <span>Model</span><strong id="wagon-stats-model"></strong>
+                        <span>Required Horses</span><strong id="wagon-stats-horses"></strong>
+                        <span>Storage Slots</span><strong id="wagon-stats-slots"></strong>
+                        <span>Maximum Weight</span><strong id="wagon-stats-weight"></strong>
+                        <span>Value</span><strong id="wagon-stats-price"></strong>
+                    </div>
+                    <div class="modal-actions single-action">
+                        <button id="wagon-stats-close" type="button">Close</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+    <script src="app.js"></script>
+</body>
+</html>
