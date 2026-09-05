@@ -77,8 +77,65 @@
         </section>
     </main>
 
+    <main id="wild-register-window" class="horse-window" aria-hidden="true">
+        <section class="horse-card wild-register-card">
+            <header>
+                <div>
+                    <p class="eyebrow">Wild Horse</p>
+                    <h1>Register Horse</h1>
+                </div>
+                <div class="header-controls">
+                    <label class="scale-control">
+                        <span>Scale</span>
+                        <input data-ui-scale type="range" min="0.50" max="2.00" step="0.05" value="1.00" aria-label="Scale interface">
+                        <output data-scale-value>100%</output>
+                    </label>
+                    <button id="wild-register-close" class="close-button" type="button" aria-label="Close">&times;</button>
+                </div>
+            </header>
+
+            <div class="summary">
+                <div><span>Breed</span><strong id="wild-register-breed"></strong></div>
+                <div><span>Gender</span><strong id="wild-register-gender"></strong></div>
+            </div>
+
+            <h2>Starting Stats</h2>
+            <div class="stats">
+                <div><span>Health</span><strong id="wild-register-health"></strong></div>
+                <div><span>Stamina</span><strong id="wild-register-stamina"></strong></div>
+                <div><span>Agility</span><strong id="wild-register-agility"></strong></div>
+                <div><span>Speed</span><strong id="wild-register-speed"></strong></div>
+                <div><span>Acceleration</span><strong id="wild-register-acceleration"></strong></div>
+                <div><span>Strength</span><strong id="wild-register-strength"></strong></div>
+            </div>
+
+            <div class="weights">
+                <div><span>Carry Weight</span><strong id="wild-register-carry-weight"></strong></div>
+                <div><span>Pull Weight</span><strong id="wild-register-pull-weight"></strong></div>
+            </div>
+
+            <label class="wild-register-name">
+                <span>Horse Name</span>
+                <input id="wild-register-name" type="text" maxlength="32" autocomplete="off">
+            </label>
+
+            <div class="wild-register-costs">
+                <div><span>Registration Fee</span><strong id="wild-register-fee"></strong></div>
+                <div id="wild-register-slot-row"><span>Additional Horse Slot</span><strong id="wild-register-slot-fee"></strong></div>
+                <div class="wild-register-total"><span>Total</span><strong id="wild-register-total"></strong></div>
+            </div>
+            <p id="wild-register-slot-note" class="wild-register-note">Your stable is full. Registration includes the purchase of your next horse slot.</p>
+
+            <footer>
+                <button id="wild-register-cancel" class="secondary" type="button">Cancel</button>
+                <button id="wild-register-confirm" class="primary" type="button">Register Horse</button>
+            </footer>
+        </section>
+    </main>
+
     <main id="manage-window" class="manage-window" aria-hidden="true">
         <section class="manage-card">
+            <div class="manage-card-content">
             <header>
                 <div>
                     <p id="manage-eyebrow" class="eyebrow">Stable Management</p>
@@ -153,6 +210,7 @@
 
             <div class="manage-actions" data-manage-main data-owned-wagon hidden>
                 <button type="button" data-wagon-action="setRiding">Set Active Wagon</button>
+                <button type="button" data-wagon-action="repair" hidden>Repair Wagon</button>
                 <button type="button" data-wagon-action="assignHorses">Assign Horses</button>
                 <button type="button" data-wagon-action="customize">Customize Wagon</button>
                 <button type="button" data-wagon-action="stats">Wagon Stats</button>
@@ -160,9 +218,97 @@
                 <button class="danger" type="button" data-wagon-action="sell">Sell Wagon</button>
             </div>
 
+            <div class="manage-actions auction-entry" data-manage-main>
+                <button id="open-horse-auction" type="button">Horse Auction</button>
+            </div>
+
             <footer data-manage-main>
                 <button id="manage-leave" class="secondary" type="button">Leave</button>
             </footer>
+
+            <div id="auction-panel" hidden>
+                <div class="customize-horse-summary">
+                    <strong id="auction-title">Horse Auction</strong>
+                    <span id="auction-description">Buy, sell, and receive horses held by the auction stable.</span>
+                </div>
+
+                <div id="auction-home" class="auction-actions">
+                    <button type="button" data-auction-home="buy">Buy Horse</button>
+                    <button type="button" data-auction-home="sell">Sell Horse</button>
+                    <button id="auction-held-button" type="button" data-auction-home="held">Horses Held</button>
+                    <button id="auction-tracked-button" type="button" data-auction-home="tracked">Tracked Auctions</button>
+                </div>
+
+                <div id="auction-buy" hidden>
+                    <div class="auction-type-row">
+                        <button class="active" type="button" data-auction-type="direct">Direct Sale</button>
+                        <button type="button" data-auction-type="auction">Auction</button>
+                    </div>
+                    <div class="auction-filters">
+                        <label>Minimum Level<input id="auction-min-level" type="number" min="1" max="10"></label>
+                        <label>Maximum Level<input id="auction-max-level" type="number" min="1" max="10"></label>
+                        <label>Minimum Price<input id="auction-min-price" type="number" min="0" step="0.01"></label>
+                        <label>Maximum Price<input id="auction-max-price" type="number" min="0" step="0.01"></label>
+                    </div>
+                    <details class="auction-stat-filters">
+                        <summary>Horse Stat Filters</summary>
+                        <div id="auction-stat-filter-grid" class="auction-filters"></div>
+                    </details>
+                    <button id="auction-view-horses" type="button">View Horses</button>
+                </div>
+
+                <div id="auction-sell" hidden>
+                    <div id="auction-sell-list" class="slot-list"></div>
+                    <div id="auction-sell-details" class="auction-horse-details"></div>
+                    <div id="auction-listing-form" hidden>
+                        <div class="auction-type-row">
+                            <button class="active" type="button" data-auction-sell-type="direct">Direct Sale</button>
+                            <button type="button" data-auction-sell-type="auction">Auction</button>
+                        </div>
+                        <div class="auction-filters">
+                            <label id="auction-price-label">Sale Price<input id="auction-list-price" type="number" min="1" step="0.01"></label>
+                            <label>Days<input id="auction-list-days" type="number" min="1" max="30" value="1"></label>
+                        </div>
+                        <p id="auction-listing-fee">Listing fee: $1.00</p>
+                        <button id="auction-create-listing" type="button">List Horse</button>
+                    </div>
+                </div>
+
+                <div id="auction-results" hidden>
+                    <div class="auction-browser">
+                        <section class="auction-browser-list">
+                            <h2>Horse Listings</h2>
+                            <div id="auction-result-list" class="slot-list" tabindex="0"></div>
+                        </section>
+                        <section class="auction-browser-details">
+                            <h2>Horse Details</h2>
+                            <div id="auction-horse-details" class="auction-horse-details"></div>
+                            <div id="auction-purchase-actions" class="auction-actions"></div>
+                        </section>
+                    </div>
+                </div>
+
+                <div id="auction-tracked" hidden>
+                    <div id="auction-tracked-list" class="slot-list"></div>
+                    <div id="auction-tracked-details" class="auction-horse-details"></div>
+                    <div id="auction-tracked-actions" class="auction-actions"></div>
+                </div>
+
+                <div id="auction-held" hidden>
+                    <div class="stable-balance-row"><span>Auction Funds</span><strong id="auction-funds">$0.00</strong></div>
+                    <button id="auction-collect-funds" type="button">Collect Funds</button>
+                    <h2>Currently Selling</h2>
+                    <div id="auction-selling-list" class="slot-list"></div>
+                    <h2>Waiting for Stable</h2>
+                    <div id="auction-receiving-list" class="slot-list"></div>
+                    <div id="auction-held-details" class="auction-horse-details"></div>
+                    <div id="auction-held-actions" class="auction-actions"></div>
+                </div>
+
+                <footer>
+                    <button id="auction-back" class="secondary" type="button">Back</button>
+                </footer>
+            </div>
 
             <div id="wagon-horses-panel" hidden>
                 <div class="customize-horse-summary">
@@ -209,30 +355,34 @@
                     <span>Customization Cost</span>
                     <strong id="customize-price"></strong>
                 </div>
+                <button id="customize-save" class="primary customization-save" type="button">Save Customization</button>
                 <div class="customize-actions">
                     <button id="customize-cancel" type="button">Cancel</button>
-                    <button id="customize-save" class="primary" type="button">Save Customization</button>
                 </div>
             </div>
 
             <div id="wagon-customize-panel" hidden>
                 <div class="customize-horse-summary">
                     <strong id="wagon-customize-title">Buy Wagon</strong>
-                    <span id="wagon-customize-description"></span>
                 </div>
                 <div id="wagon-model-browser">
-                    <span class="wagon-browser-label">Wagon Models</span>
-                    <div id="wagon-model-list" class="wagon-model-list"></div>
+                    <div class="wagon-model-display">
+                        <span>Wagon Name:</span><strong id="wagon-model-name"></strong>
+                        <span>Type</span><strong id="wagon-model-type"></strong>
+                        <span>Max Weight</span><strong id="wagon-model-weight"></strong>
+                        <span>Storage Slots</span><strong id="wagon-model-slots"></strong>
+                        <span>Number of Horses</span><strong id="wagon-model-horses"></strong>
+                        <span>Buy Price</span><strong id="wagon-model-price"></strong>
+                    </div>
+                    <div class="wagon-model-navigation">
+                        <label for="wagon-model-scroll">Wagon Model # <strong id="wagon-model-number"></strong></label>
+                        <input id="wagon-model-scroll" type="range" min="1" step="1">
+                        <div class="wagon-model-arrows">
+                            <button id="wagon-model-previous" type="button" aria-label="Previous wagon">&#8592;</button>
+                            <button id="wagon-model-next" type="button" aria-label="Next wagon">&#8594;</button>
+                        </div>
+                    </div>
                 </div>
-                <div id="wagon-horses-needed" class="wagon-horses-needed">
-                    <span>Horses Needed:</span>
-                    <strong id="wagon-horses-needed-count"></strong>
-                    <small id="wagon-horses-needed-warning">Not enough horses</small>
-                </div>
-                <label class="form-field">
-                    <span>Wagon Name</span>
-                    <input id="wagon-name" type="text" maxlength="32" autocomplete="off">
-                </label>
                 <div class="wagon-customize-options">
                     <label class="customize-category">
                         <span>Livery</span><output id="wagon-livery-value"></output>
@@ -257,13 +407,17 @@
                     </div>
                 </div>
                 <p class="customize-help">Browse each extra and enable any combination you want. Enabled extras are listed below the slider.</p>
+                <label class="form-field wagon-name-field">
+                    <strong>Wagon Name</strong>
+                    <input id="wagon-name" type="text" maxlength="100" autocomplete="off">
+                </label>
                 <div id="wagon-price-row" class="customize-price-row">
                     <span id="wagon-price-label">Purchase Price</span>
                     <strong id="wagon-price"></strong>
                 </div>
+                <button id="wagon-customize-save" class="primary customization-save" type="button">Buy Wagon</button>
                 <div class="customize-actions">
                     <button id="wagon-customize-cancel" type="button">Cancel</button>
-                    <button id="wagon-customize-save" class="primary" type="button">Buy Wagon</button>
                 </div>
             </div>
 
@@ -312,13 +466,34 @@
                         <span>Model</span><strong id="wagon-stats-model"></strong>
                         <span>Required Horses</span><strong id="wagon-stats-horses"></strong>
                         <span>Storage Slots</span><strong id="wagon-stats-slots"></strong>
-                        <span>Maximum Weight</span><strong id="wagon-stats-weight"></strong>
+                        <span>Current Weight Limit</span><strong id="wagon-stats-current-weight"></strong>
+                        <span>Maximum Weight Limit</span><strong id="wagon-stats-weight"></strong>
                         <span>Value</span><strong id="wagon-stats-price"></strong>
                     </div>
                     <div class="modal-actions single-action">
                         <button id="wagon-stats-close" type="button">Close</button>
                     </div>
                 </div>
+            </div>
+            </div>
+        </section>
+    </main>
+    <main id="stable-inventory-window" class="stable-inventory-window" aria-hidden="true">
+        <section class="stable-inventory-card">
+            <header>
+                <div>
+                    <p class="eyebrow">Stable Inventory</p>
+                    <h1>Stable Inventory</h1>
+                </div>
+                <button id="stable-inventory-close" class="close-button" type="button" aria-label="Close">&times;</button>
+            </header>
+            <p id="stable-inventory-fee" class="stable-inventory-fee" hidden></p>
+            <p class="stable-inventory-description">Items placed here are protected when a horse or wagon cannot carry them. Select one or more items below, then transfer them directly to your active horse or active wagon.</p>
+            <div id="stable-inventory-items" class="stable-inventory-items"></div>
+            <p id="stable-inventory-empty" class="stable-inventory-empty">There are no items in stable inventory.</p>
+            <div class="stable-inventory-actions">
+                <button id="transfer-stable-horse" type="button">Transfer to Active Horse</button>
+                <button id="transfer-stable-wagon" type="button">Transfer to Active Wagon</button>
             </div>
         </section>
     </main>

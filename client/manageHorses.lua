@@ -19,6 +19,8 @@ local wagonCustomization
 local previewIsWagon = false
 local assignmentWagonId
 local SpawnPreviewWagonHorses
+local auctionListings = {}
+local auctionHeld = { selling = {}, receiving = {}, funds = 0 }
 
 HorseManagerOpen = false
 
@@ -58,6 +60,34 @@ local function BuildHorseList()
     return horseList
 end
 
+local function BuildAuctionHorse(horse)
+    local base, stats, level = HorseStats.Calculate(horse)
+    if not base then return end
+    local modifiers = {}
+    if horse.wild == 1 or horse.wild == true or horse.wild == '1' then
+        local success, stored = pcall(json.decode, horse.stat_modifiers or '')
+        if success and stored and stored.modifiers then modifiers = stored.modifiers end
+        if modifiers.strength == nil and modifiers.carry ~= nil then modifiers.strength = modifiers.carry end
+    end
+    return {
+        id = horse.id, name = horse.name, horse = horse.horse, gender = horse.gender,
+        wild = horse.wild == 1 or horse.wild == true or horse.wild == '1',
+        breed = base.breed, level = level, stats = stats,
+        carryWeight = HorseStats.GetCarryWeight(stats.strength),
+        pullWeight = HorseStats.GetPullWeight(stats.strength),
+        wildModifiers = modifiers,
+    }
+end
+
+local function BuildAuctionOwnedHorses()
+    local horses = {}
+    for _, horse in ipairs(managedHorses) do
+        local built = BuildAuctionHorse(horse)
+        if built then horses[#horses + 1] = built end
+    end
+    return horses
+end
+
 local function BuildWagonList()
     local wagonList = {}
 
@@ -71,6 +101,8 @@ local function BuildWagonList()
                 label = wagonConfig.label,
                 active = wagon.active == 1 or wagon.active == true,
                 ready = wagon.ready == true,
+                needsRepair = wagon.needs_repair == 1 or wagon.needs_repair == true,
+                repairPrice = wagon.repairPrice,
                 horseCount = wagonConfig.horseCount,
                 horses = wagon.horses or {},
             }
@@ -183,6 +215,11 @@ local function ApplyWagonPreviewCustomization(wagon, selectedCustomization)
     end
 
     SpawnPreviewWagonHorses(wagon, selectedCustomization)
+    SetTimeout(250, function()
+        if wagon == previewWagon and DoesEntityExist(wagon) then
+            SpawnPreviewWagonHorses(wagon, selectedCustomization)
+        end
+    end)
 end
 
 local function SpawnPreviewWagon(wagon)
@@ -217,6 +254,17 @@ local function SpawnPreviewWagon(wagon)
     SetEntityInvincible(previewWagon, true)
     FreezeEntityPosition(previewWagon, true)
     ApplyWagonPreviewCustomization(previewWagon, wagon)
+
+    if wagon.needs_repair == 1 or wagon.needs_repair == true then
+        local damagedPreview = previewWagon
+        SetTimeout(300, function()
+            if previewWagon == damagedPreview and DoesEntityExist(damagedPreview) then
+                BreakOffVehicleWheel(damagedPreview, 0, true, false, 0, false)
+                BreakOffVehicleWheel(damagedPreview, 1, true, false, 0, false)
+                FreezeEntityPosition(previewWagon, false)
+            end
+        end)
+    end
 
 end
 
@@ -521,6 +569,7 @@ local function BuildWagonCatalog()
             model = model,
             label = wagon.label,
             description = wagon.description,
+            category = wagon.category,
             price = wagon.price,
             horseCount = wagon.horseCount,
             maxWeight = wagon.maxWeight,
@@ -677,10 +726,6 @@ RegisterNUICallback('customizeComponentTint', function(data, cb)
     cb({ success = true })
 end)
 
-RegisterCommand('managehorses', function()
-    OpenHorseManager('Valentine')
-end, false)
-
 RegisterNUICallback('selectManagedHorse', function(data, cb)
     local selectedId = tonumber(data.horseId)
     local horse = GetManagedHorse(selectedId)
@@ -751,6 +796,23 @@ RegisterNUICallback('managedWagonAction', function(data, cb)
         return cb({ success = result and result.success == true })
     end
 
+    if data.action == 'repair' then
+        local result = lib.callback.await('nt_stables:server:repairWagon', false, wagon.id)
+        if result and result.success then
+            local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
+            managedHorses = managerData.horses
+            managedWagons = managerData.wagons
+            stableManagerData = managerData
+            local repairedWagon = GetManagedWagon(wagon.id)
+            if repairedWagon then SpawnPreviewWagon(repairedWagon) end
+            SendStableManagerData('refreshManagedHorses', nil, wagon.id)
+            lib.notify({ title = ('%s repaired for $%.2f.'):format(wagon.name, result.price), type = 'success', duration = 10000 })
+        elseif result and result.message then
+            lib.notify({ title = result.message, type = 'error', duration = 10000 })
+        end
+        return cb({ success = result and result.success == true })
+    end
+
     if data.action == 'assignHorses' then
         OpenWagonHorseAssignment(wagon)
         return cb({ success = true })
@@ -763,6 +825,12 @@ RegisterNUICallback('managedWagonAction', function(data, cb)
 
     if data.action == 'stats' then
         local wagonConfig = ConfigWagon.Wagons[wagon.model]
+        local currentWeight = 0
+        for _, horse in ipairs(wagon.horses or {}) do
+            local _, stats = HorseStats.Calculate(horse)
+            if stats then currentWeight = currentWeight + (HorseStats.GetPullWeight(stats.strength) * 1000) end
+        end
+
         SendNUIMessage({
             action = 'openWagonStats',
             name = wagon.name,
@@ -770,6 +838,7 @@ RegisterNUICallback('managedWagonAction', function(data, cb)
             description = wagonConfig.description,
             horseCount = wagonConfig.horseCount,
             slots = wagonConfig.slots,
+            currentWeight = math.min(currentWeight, wagonConfig.maxWeight),
             maxWeight = wagonConfig.maxWeight,
             price = wagonConfig.price,
         })
@@ -1101,8 +1170,8 @@ RegisterNUICallback('sellManagedHorse', function(data, cb)
     if not horse then return cb({ success = false }) end
 
     local result = lib.callback.await('nt_stables:server:sellHorse', false, horse.id)
-    if not result then
-        lib.notify({ title = 'Unable to sell this horse.', type = 'error', duration = 10000 })
+    if not result or result.success == false then
+        lib.notify({ title = result and result.message or 'Unable to sell this horse.', type = 'error', duration = 10000 })
         return cb({ success = false })
     end
 
@@ -1148,7 +1217,7 @@ RegisterNUICallback('renameManagedWagon', function(data, cb)
         SendStableManagerData('refreshManagedHorses', nil, wagon.id)
         lib.notify({ title = 'Wagon renamed to ' .. wagonName .. '.', type = 'success', duration = 10000 })
     else
-        lib.notify({ title = 'Wagon names must contain 1 to 32 valid characters.', type = 'error', duration = 10000 })
+        lib.notify({ title = 'Wagon names must contain 1 to 100 valid characters.', type = 'error', duration = 10000 })
     end
 
     cb({ success = success })
@@ -1167,8 +1236,8 @@ RegisterNUICallback('sellManagedWagon', function(data, cb)
     if not wagon then return cb({ success = false }) end
 
     local result = lib.callback.await('nt_stables:server:sellWagon', false, wagon.id)
-    if not result then
-        lib.notify({ title = 'Unable to sell this wagon.', type = 'error', duration = 10000 })
+    if not result or result.success == false then
+        lib.notify({ title = result and result.message or 'Unable to sell this wagon.', type = 'error', duration = 10000 })
         return cb({ success = false })
     end
 
@@ -1196,6 +1265,133 @@ RegisterNUICallback('sellManagedWagon', function(data, cb)
     end
 
     cb({ success = true })
+end)
+
+RegisterNUICallback('openHorseAuction', function(_, cb)
+    local home = lib.callback.await('nt_stables:server:getAuctionHome', false)
+    if not home then return cb({ success = false }) end
+    SendNUIMessage({ action = 'openHorseAuction', home = home, horses = BuildAuctionOwnedHorses() })
+    cb({ success = true })
+end)
+
+RegisterNUICallback('auctionPreviewOwnedHorse', function(data, cb)
+    local horse = GetManagedHorse(tonumber(data.horseId))
+    if horse then SpawnPreviewHorse(horse) end
+    cb({ success = horse ~= nil })
+end)
+
+RegisterNUICallback('createAuctionListing', function(data, cb)
+    local horse = GetManagedHorse(tonumber(data.horseId))
+    if not horse then return cb({ success = false, message = 'Horse not found.' }) end
+    local result = lib.callback.await('nt_stables:server:createAuctionListing', false, horse.id, data.listingType, data.price, data.days)
+    if result and result.success then
+        if result.wasActive then TriggerEvent('nt_stables:client:ridingHorseChanged') end
+        if result.clearedWagon then TriggerEvent('nt_stables:client:ridingWagonChanged') end
+        local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
+        managedHorses, managedWagons, stableManagerData = managerData.horses, managerData.wagons, managerData
+        auctionHeld = lib.callback.await('nt_stables:server:getHeldHorses', false)
+        SendNUIMessage({ action = 'refreshAuctionHeld', held = auctionHeld })
+        lib.notify({ title = horse.name .. ' was moved to the auction stable.', type = 'success', duration = 10000 })
+    else
+        lib.notify({ title = result and result.message or 'The horse could not be listed.', type = 'error', duration = 10000 })
+    end
+    cb(result or { success = false })
+end)
+
+RegisterNUICallback('getAuctionListings', function(data, cb)
+    auctionListings = lib.callback.await('nt_stables:server:getAuctionListings', false, data.listingType, data.filters) or {}
+    cb({ success = true, listings = auctionListings })
+end)
+
+RegisterNUICallback('getTrackedAuctions', function(_, cb)
+    auctionListings = lib.callback.await('nt_stables:server:getTrackedAuctions', false) or {}
+    cb({ success = true, listings = auctionListings })
+end)
+
+RegisterNUICallback('trackAuction', function(data, cb)
+    local result = lib.callback.await('nt_stables:server:trackAuction', false, data.listingId)
+    if result and result.success then
+        lib.notify({ title = 'Auction added to your tracked auctions.', type = 'success', duration = 10000 })
+    else
+        lib.notify({ title = result and result.message or 'The auction could not be tracked.', type = 'error', duration = 10000 })
+    end
+    cb(result or { success = false })
+end)
+
+RegisterNUICallback('untrackAuction', function(data, cb)
+    local result = lib.callback.await('nt_stables:server:untrackAuction', false, data.listingId)
+    cb(result or { success = false })
+end)
+
+RegisterNUICallback('auctionPreviewListing', function(data, cb)
+    local listingId = tonumber(data.listingId)
+    for _, listing in ipairs(auctionListings) do
+        if tonumber(listing.id) == listingId then SpawnPreviewHorse(listing.horse) return cb({ success = true }) end
+    end
+    for _, listing in ipairs(auctionHeld.selling or {}) do
+        if tonumber(listing.id) == listingId then SpawnPreviewHorse(listing.horse) return cb({ success = true }) end
+    end
+    cb({ success = false })
+end)
+
+RegisterNUICallback('buyAuctionHorse', function(data, cb)
+    local result = lib.callback.await('nt_stables:server:buyAuctionHorse', false, data.listingId)
+    lib.notify({ title = result and result.success and 'Horse purchased. It is waiting under Horses Held.' or (result and result.message or 'Purchase failed.'), type = result and result.success and 'success' or 'error', duration = 10000 })
+    cb(result or { success = false })
+end)
+
+RegisterNUICallback('placeAuctionBid', function(data, cb)
+    local result = lib.callback.await('nt_stables:server:placeAuctionBid', false, data.listingId, data.amount)
+    lib.notify({ title = result and result.success and 'Bid placed.' or (result and result.message or 'Bid failed.'), type = result and result.success and 'success' or 'error', duration = 10000 })
+    cb(result or { success = false })
+end)
+
+RegisterNUICallback('getHeldHorses', function(_, cb)
+    auctionHeld = lib.callback.await('nt_stables:server:getHeldHorses', false) or { selling = {}, receiving = {}, funds = 0 }
+    cb({ success = true, held = auctionHeld })
+end)
+
+RegisterNUICallback('auctionPreviewHeldHorse', function(data, cb)
+    local heldId = tonumber(data.heldId)
+    local records = data.heldType == 'selling' and auctionHeld.selling or auctionHeld.receiving
+    for _, record in ipairs(records or {}) do
+        if tonumber(record.id) == heldId then SpawnPreviewHorse(record.horse) return cb({ success = true }) end
+    end
+    cb({ success = false })
+end)
+
+RegisterNUICallback('cancelAuctionListing', function(data, cb)
+    local result = lib.callback.await('nt_stables:server:cancelAuctionListing', false, data.listingId)
+    if result and result.success then auctionHeld = lib.callback.await('nt_stables:server:getHeldHorses', false) end
+    lib.notify({ title = result and result.success and 'Listing cancelled. The horse is waiting for your stable.' or (result and result.message or 'Cancellation failed.'), type = result and result.success and 'success' or 'error', duration = 10000 })
+    cb(result and result.success and { success = true, held = auctionHeld, horses = BuildAuctionOwnedHorses() } or (result or { success = false }))
+end)
+
+RegisterNUICallback('receiveAuctionHorse', function(data, cb)
+    local result = lib.callback.await('nt_stables:server:receiveAuctionHorse', false, data.receiveId)
+    if result and result.success then
+        local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
+        managedHorses, managedWagons, stableManagerData = managerData.horses, managerData.wagons, managerData
+        auctionHeld = lib.callback.await('nt_stables:server:getHeldHorses', false)
+    end
+    lib.notify({ title = result and result.success and 'Horse added to your stable.' or (result and result.message or 'The horse could not be received.'), type = result and result.success and 'success' or 'error', duration = 10000 })
+    cb(result and result.success and { success = true, held = auctionHeld, horses = BuildAuctionOwnedHorses() } or (result or { success = false }))
+end)
+
+RegisterNUICallback('collectAuctionFunds', function(_, cb)
+    local result = lib.callback.await('nt_stables:server:collectAuctionFunds', false)
+    if result and result.success then auctionHeld.funds = 0 end
+    lib.notify({ title = result and result.success and ('$%.2f collected.'):format(result.amount) or (result and result.message or 'Funds could not be collected.'), type = result and result.success and 'success' or 'error', duration = 10000 })
+    cb(result or { success = false })
+end)
+
+RegisterNUICallback('closeHorseAuction', function(_, cb)
+    local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
+    managedHorses, managedWagons, stableManagerData = managerData.horses, managerData.wagons, managerData
+    local horse = managedHorses[1]
+    if horse then SpawnPreviewHorse(horse) else DeletePreviewHorse() end
+    SendStableManagerData('returnFromHorseAuction', horse and horse.id)
+    cb(1)
 end)
 
 RegisterNUICallback('horseCameraZoom', function(data, cb)

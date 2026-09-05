@@ -1,7 +1,7 @@
 local HorseStats = {}
 
 -- One direct starting-stat entry per horse model.
--- Starting ranks: health/stamina/strength 1-5; agility/speed/acceleration 0-5.
+-- Starting ranks: health/stamina 1-5; strength 1-6; agility/speed/acceleration 0-5.
 local horses = {
     a_c_horse_mp_mangy_backup = { breed = 'Mangy Starter Horse', size = 'small', health = 1, stamina = 1, agility = 1, speed = 1, acceleration = 0, strength = 1 },
     a_c_horse_morgan_liverchestnut_pc = { breed = 'Morgan', size = 'small', health = 2, stamina = 3, agility = 3, speed = 3, acceleration = 4, strength = 2 },
@@ -17,9 +17,9 @@ local horses = {
     a_c_horse_tennesseewalker_goldpalomino_pc = { breed = 'Tennessee Walker', size = 'medium', health = 3, stamina = 3, agility = 3, speed = 3, acceleration = 3, strength = 2 },
     a_c_horse_tennesseewalker_redroan = { breed = 'Tennessee Walker', size = 'medium', health = 3, stamina = 3, agility = 3, speed = 3, acceleration = 3, strength = 2 },
     a_c_horse_tennesseewalker_flaxenroan = { breed = 'Tennessee Walker', size = 'medium', health = 2, stamina = 3, agility = 4, speed = 4, acceleration = 4, strength = 2 },
-    a_c_horse_belgian_blondchestnut = { breed = 'Belgian Draft', size = 'large', health = 4, stamina = 4, agility = 2, speed = 2, acceleration = 2, strength = 4 },
-    a_c_horse_belgian_mealychestnut = { breed = 'Belgian Draft', size = 'large', health = 4, stamina = 4, agility = 2, speed = 2, acceleration = 2, strength = 4 },
-    a_c_horse_shire_lightgrey = { breed = 'Shire', size = 'large', health = 4, stamina = 4, agility = 2, speed = 2, acceleration = 2, strength = 4 },
+    a_c_horse_belgian_blondchestnut = { breed = 'Belgian Draft', size = 'large', health = 4, stamina = 4, agility = 2, speed = 2, acceleration = 2, strength = 5 },
+    a_c_horse_belgian_mealychestnut = { breed = 'Belgian Draft', size = 'large', health = 4, stamina = 4, agility = 2, speed = 2, acceleration = 2, strength = 5 },
+    a_c_horse_shire_lightgrey = { breed = 'Shire', size = 'large', health = 4, stamina = 4, agility = 2, speed = 2, acceleration = 2, strength = 6 },
     a_c_horse_suffolkpunch_sorrel = { breed = 'Suffolk Punch', size = 'large', health = 4, stamina = 4, agility = 2, speed = 2, acceleration = 2, strength = 4 },
     a_c_horse_americanpaint_tobiano = { breed = 'American Paint', size = 'medium', health = 3, stamina = 3, agility = 3, speed = 3, acceleration = 3, strength = 3 },
     a_c_horse_americanpaint_splashedwhite = { breed = 'American Paint', size = 'medium', health = 3, stamina = 3, agility = 3, speed = 3, acceleration = 3, strength = 3 },
@@ -67,6 +67,7 @@ local horses = {
 }
 
 local prices = {
+    a_c_horse_mp_mangy_backup = 0,
     a_c_horse_dutchwarmblood_chocolateroan = 250,
     a_c_horse_dutchwarmblood_sootybuckskin = 250,
     a_c_horse_kentuckysaddle_silverbay = 50,
@@ -212,7 +213,8 @@ function HorseStats.Calculate(data)
 
     for _, stat in ipairs(HorseStats.StatNames) do
         local startingStat = math.floor(base[stat] + (tonumber(modifiers[stat]) or 0) + 0.5)
-        startingStat = math.max(HorseStats.MinimumRank[stat], math.min(5, startingStat))
+        local maximumStartingRank = stat == 'strength' and 6 or HorseStats.MaximumStartingRank
+        startingStat = math.max(HorseStats.MinimumRank[stat], math.min(maximumStartingRank, startingStat))
         finalStats[stat] = math.max(HorseStats.MinimumRank[stat], math.min(9, startingStat + HorseStats.TrainingBonus[level][stat]))
     end
 

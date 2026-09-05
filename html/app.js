@@ -1,8 +1,12 @@
 const horseWindow = document.getElementById('horse-window');
+const wildRegisterWindow = document.getElementById('wild-register-window');
 const manageWindow = document.getElementById('manage-window');
+const stableInventoryWindow = document.getElementById('stable-inventory-window');
 const horseCard = document.querySelector('.horse-card');
+const wildRegisterCard = document.querySelector('.wild-register-card');
 const manageCard = document.querySelector('.manage-card');
 const buyButton = document.getElementById('buy');
+const wildRegisterConfirm = document.getElementById('wild-register-confirm');
 const scaleInputs = document.querySelectorAll('[data-ui-scale]');
 const scaleValues = document.querySelectorAll('[data-scale-value]');
 const cameraZoom = document.getElementById('camera-zoom');
@@ -15,6 +19,7 @@ const wagonHorsesPanel = document.getElementById('wagon-horses-panel');
 const customizeCategories = document.getElementById('customize-categories');
 const scaleStorageKey = 'nt_stables_ui_scale_v2';
 const baseUiScale = 1.25;
+const manageBaseWidth = 560;
 const customizeBaseScale = Number(getComputedStyle(document.documentElement).getPropertyValue('--customize-base-scale')) || 1;
 const defaultUiScale = 1;
 let managedHorses = [];
@@ -39,6 +44,14 @@ let wagonOriginalCustomization = { livery: -1, tint: 0, extras: [], lantern: 0 }
 let wagonCustomizationPrices = { livery: 0, tint: 0, extras: 0, lanterns: 0 };
 let ownedHorseCount = 0;
 let wagonHorseAssignment = { wagonId: 0, horseCount: 0, assignments: [], horses: [], selectedSlot: 0 };
+let stableInventory = { items: [], horse: null, wagon: null };
+let auctionHome = { selling: 0, receiving: 0, funds: 0 };
+let auctionOwnedHorses = [];
+let auctionListings = [];
+let auctionHeld = { selling: [], receiving: [], funds: 0 };
+let auctionBuyType = 'direct';
+let auctionSellType = 'direct';
+let selectedAuctionHorseId = 0;
 
 const postNui = (callback, data = {}) => fetch(`https://${GetParentResourceName()}/${callback}`, {
     method: 'POST',
@@ -52,6 +65,8 @@ const applyScale = (value) => {
     document.documentElement.style.setProperty('--horse-ui-scale', scale * baseUiScale);
     document.documentElement.style.setProperty('--manage-ui-scale', scale);
     document.documentElement.style.setProperty('--customize-ui-scale', scale * customizeBaseScale);
+    document.documentElement.style.setProperty('--manage-panel-width', `${manageBaseWidth * scale}px`);
+    document.documentElement.style.setProperty('--manage-content-height', `${window.innerHeight / scale}px`);
     scaleInputs.forEach((input) => { input.value = scale.toFixed(2); });
     scaleValues.forEach((output) => { output.textContent = `${Math.round(scale * 100)}%`; });
     localStorage.setItem(scaleStorageKey, scale);
@@ -59,11 +74,12 @@ const applyScale = (value) => {
 
 const updateScaleLimit = () => {
     const horseVisible = horseWindow.classList.contains('visible');
-    const card = horseVisible ? horseCard : manageCard;
-    const cardBaseScale = horseVisible ? baseUiScale : manageCard.classList.contains('customizing') ? customizeBaseScale : 1;
-    const widthScale = (window.innerWidth * 0.94) / (card.offsetWidth * cardBaseScale);
+    const wildRegisterVisible = wildRegisterWindow.classList.contains('visible');
+    const card = horseVisible ? horseCard : wildRegisterVisible ? wildRegisterCard : manageCard;
+    const cardBaseScale = horseVisible || wildRegisterVisible ? baseUiScale : manageCard.classList.contains('customizing') ? customizeBaseScale : 1;
+    const widthScale = (window.innerWidth * 0.94) / ((horseVisible || wildRegisterVisible ? card.offsetWidth : manageBaseWidth) * cardBaseScale);
     const heightScale = (window.innerHeight * 0.94) / (card.offsetHeight * cardBaseScale);
-    const viewportMax = Math.min(2, widthScale, heightScale);
+    const viewportMax = horseVisible || wildRegisterVisible ? Math.min(2, widthScale, heightScale) : Math.min(2, widthScale);
     const maxScale = Math.max(0.5, Math.floor((viewportMax + Number.EPSILON) / 0.05) * 0.05);
 
     scaleInputs.forEach((input) => { input.max = maxScale.toFixed(2); });
@@ -74,7 +90,61 @@ const savedScale = Number(localStorage.getItem(scaleStorageKey));
 applyScale(savedScale >= 0.5 ? savedScale : defaultUiScale);
 
 const closeHorse = () => postNui('closeHorse');
+const closeWildHorseRegistration = () => postNui('closeWildHorseRegistration');
 const closeHorseManager = () => postNui('closeHorseManager');
+const closeStableInventory = () => postNui('closeStableInventory');
+
+const renderStableInventory = (inventory) => {
+    stableInventory = inventory;
+    const itemList = document.getElementById('stable-inventory-items');
+    const emptyMessage = document.getElementById('stable-inventory-empty');
+    const fee = document.getElementById('stable-inventory-fee');
+    itemList.replaceChildren();
+    emptyMessage.hidden = inventory.items.length > 0;
+
+    fee.hidden = Number(inventory.storageFee) <= 0;
+    fee.textContent = `Storage fee: $${Number(inventory.storageFee).toFixed(2)} per hour`;
+
+    inventory.items.forEach((item) => {
+        const row = document.createElement('label');
+        row.className = 'stable-inventory-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = item.slot;
+        checkbox.addEventListener('change', updateStableTransferButtons);
+        const image = document.createElement('img');
+        image.src = `nui://rsg-inventory/html/images/${item.image}`;
+        image.alt = '';
+        const name = document.createElement('span');
+        name.textContent = `${item.label || item.name} - ${item.amount}`;
+        row.append(checkbox, image, name);
+        itemList.appendChild(row);
+    });
+    updateStableTransferButtons();
+};
+
+const updateStableTransferButtons = () => {
+    const selected = [...document.querySelectorAll('#stable-inventory-items input:checked')];
+    const selectedItems = selected.map((checkbox) => stableInventory.items.find((item) => Number(item.slot) === Number(checkbox.value)));
+    const selectedWeight = selectedItems.reduce((weight, item) => weight + (Number(item.weight) * Number(item.amount)), 0);
+    const updateButton = (buttonId, destination) => {
+        const button = document.getElementById(buttonId);
+        button.disabled = !destination || selected.length === 0 || selected.length > destination.freeSlots
+            || Number(destination.currentWeight) + selectedWeight > Number(destination.maxWeight);
+        button.title = destination
+            ? `${destination.label}: ${(destination.currentWeight / 1000).toFixed(1)} / ${(destination.maxWeight / 1000).toFixed(1)} kg, ${destination.freeSlots} free slots`
+            : 'No active inventory is available.';
+    };
+    updateButton('transfer-stable-horse', stableInventory.horse);
+    updateButton('transfer-stable-wagon', stableInventory.wagon);
+};
+
+const transferStableInventory = async (destination) => {
+    const slots = [...document.querySelectorAll('#stable-inventory-items input:checked')].map((checkbox) => Number(checkbox.value));
+    const response = await postNui('transferStableInventory', { destination, slots });
+    const result = await response.json();
+    if (result.success) renderStableInventory(result);
+};
 
 const closeManageModals = () => {
     document.getElementById('rename-modal').hidden = true;
@@ -96,6 +166,279 @@ const showManageMain = (visible) => {
     customizePanel.hidden = visible;
     wagonCustomizePanel.hidden = true;
     wagonHorsesPanel.hidden = true;
+};
+
+const auctionSections = ['auction-home', 'auction-buy', 'auction-sell', 'auction-results', 'auction-tracked', 'auction-held'];
+const showAuctionSection = (section) => {
+    auctionSections.forEach((id) => { document.getElementById(id).hidden = id !== section; });
+    document.getElementById('auction-back').textContent = section === 'auction-home' ? 'Return to Stable' : 'Back';
+};
+
+const wildModifierText = (horse, stat) => {
+    const modifier = Number(horse.wildModifiers && horse.wildModifiers[stat]);
+    if (!horse.wild || !modifier) return '';
+    return ` (${modifier > 0 ? '+' : ''}${modifier} Wild)`;
+};
+
+const renderAuctionHorseDetails = (container, horse, extraLines = []) => {
+    container.replaceChildren();
+    if (!horse) return;
+    const heading = document.createElement('h2');
+    heading.textContent = horse.name;
+    const summary = document.createElement('p');
+    summary.textContent = `${horse.breed} • ${horse.gender === 'male' ? 'Gelding' : 'Mare'} • Level ${horse.level}`;
+    const stats = document.createElement('div');
+    stats.className = 'auction-stats-grid';
+    ['health', 'stamina', 'agility', 'speed', 'acceleration', 'strength'].forEach((stat) => {
+        const label = document.createElement('span');
+        label.textContent = stat.charAt(0).toUpperCase() + stat.slice(1);
+        const value = document.createElement('strong');
+        value.textContent = `${horse.stats[stat]}${wildModifierText(horse, stat)}`;
+        stats.append(label, value);
+    });
+    const carryLabel = document.createElement('span');
+    carryLabel.textContent = 'Carry Weight';
+    const carryValue = document.createElement('strong');
+    carryValue.textContent = `${Number(horse.carryWeight)} kg`;
+    const pullLabel = document.createElement('span');
+    pullLabel.textContent = 'Pull Weight';
+    const pullValue = document.createElement('strong');
+    pullValue.textContent = `${Number(horse.pullWeight)} kg`;
+    stats.append(carryLabel, carryValue, pullLabel, pullValue);
+    container.append(heading, summary, stats);
+    extraLines.forEach((line) => {
+        const text = document.createElement('p');
+        text.textContent = line;
+        container.append(text);
+    });
+};
+
+const formatAuctionTime = (seconds) => {
+    seconds = Math.max(0, Number(seconds) || 0);
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    return days > 0 ? `${days}d ${hours}h remaining` : `${hours}h ${Math.floor((seconds % 3600) / 60)}m remaining`;
+};
+
+const renderAuctionHome = () => {
+    const held = document.getElementById('auction-held-button');
+    const heldCount = Number(auctionHome.selling) + Number(auctionHome.receiving);
+    held.disabled = heldCount === 0 && Number(auctionHome.funds) <= 0;
+    held.textContent = heldCount > 0 ? `Horses Held (${heldCount})` : 'Horses Held';
+    const tracked = document.getElementById('auction-tracked-button');
+    tracked.disabled = Number(auctionHome.tracking) <= 0;
+    tracked.textContent = Number(auctionHome.tracking) > 0 ? `Tracked Auctions (${auctionHome.tracking})` : 'Tracked Auctions';
+    showAuctionSection('auction-home');
+};
+
+const renderAuctionSellHorses = () => {
+    const list = document.getElementById('auction-sell-list');
+    list.replaceChildren();
+    auctionOwnedHorses.forEach((horse) => {
+        const button = document.createElement('button');
+        button.className = 'horse-list-button stable-slot';
+        button.type = 'button';
+        button.textContent = `${horse.name} • ${horse.breed}`;
+        button.addEventListener('click', () => {
+            selectedAuctionHorseId = Number(horse.id);
+            list.querySelectorAll('button').forEach((entry) => entry.classList.remove('active'));
+            button.classList.add('active');
+            document.getElementById('auction-listing-form').hidden = false;
+            renderAuctionHorseDetails(document.getElementById('auction-sell-details'), horse);
+            postNui('auctionPreviewOwnedHorse', { horseId: horse.id });
+        });
+        list.append(button);
+    });
+    if (!auctionOwnedHorses.length) {
+        const empty = document.createElement('p');
+        empty.textContent = 'You have no horses available to list.';
+        list.append(empty);
+    }
+};
+
+const getAuctionFilters = () => {
+    const filters = {
+        minimumLevel: document.getElementById('auction-min-level').value,
+        maximumLevel: document.getElementById('auction-max-level').value,
+        minimumPrice: document.getElementById('auction-min-price').value,
+        maximumPrice: document.getElementById('auction-max-price').value,
+    };
+    document.querySelectorAll('#auction-stat-filter-grid input').forEach((input) => { filters[input.id.replace('auction-', '').replaceAll('-', '_')] = input.value; });
+    return filters;
+};
+
+const renderAuctionListings = () => {
+    const list = document.getElementById('auction-result-list');
+    const details = document.getElementById('auction-horse-details');
+    const actions = document.getElementById('auction-purchase-actions');
+    list.replaceChildren(); details.replaceChildren(); actions.replaceChildren();
+    auctionListings.forEach((listing, listingIndex) => {
+        const button = document.createElement('button');
+        button.className = 'horse-list-button stable-slot';
+        button.type = 'button';
+        button.dataset.listingIndex = listingIndex;
+        button.textContent = `${listing.horse.name} • ${listing.horse.breed}`;
+        button.addEventListener('click', () => {
+            list.querySelectorAll('button').forEach((entry) => entry.classList.remove('active'));
+            button.classList.add('active');
+            postNui('auctionPreviewListing', { listingId: listing.id });
+            const price = listing.listingType === 'direct' ? `Price: $${Number(listing.price).toFixed(2)}` : `Current bid: $${Number(listing.currentBid || listing.price).toFixed(2)}`;
+            renderAuctionHorseDetails(details, listing.horse, [price, `Seller: ${listing.sellerName}`, formatAuctionTime(listing.secondsLeft)]);
+            actions.replaceChildren();
+            if (listing.listingType === 'direct') {
+                const buy = document.createElement('button');
+                buy.type = 'button'; buy.textContent = `Buy Horse - $${Number(listing.price).toFixed(2)}`;
+                buy.addEventListener('click', async () => {
+                    buy.disabled = true;
+                    const response = await postNui('buyAuctionHorse', { listingId: listing.id });
+                    const result = await response.json();
+                    if (result.success) { auctionListings = auctionListings.filter((entry) => entry.id !== listing.id); renderAuctionListings(); }
+                    else buy.disabled = false;
+                });
+                actions.append(buy);
+            } else {
+                const bid = document.createElement('input');
+                bid.type = 'number'; bid.min = listing.minimumBid; bid.step = '0.01'; bid.value = Number(listing.minimumBid).toFixed(2);
+                const place = document.createElement('button');
+                place.type = 'button'; place.textContent = 'Place Bid';
+                place.addEventListener('click', async () => {
+                    place.disabled = true;
+                    const response = await postNui('placeAuctionBid', { listingId: listing.id, amount: bid.value });
+                    const result = await response.json();
+                    if (result.success) {
+                        const wasTracked = listing.tracked === true;
+                        listing.tracked = true;
+                        if (!wasTracked) auctionHome.tracking = Number(auctionHome.tracking) + 1;
+                        document.getElementById('auction-view-horses').click();
+                    }
+                    else place.disabled = false;
+                });
+                const track = document.createElement('button');
+                track.type = 'button';
+                track.textContent = listing.tracked ? 'Tracking Auction' : 'Track Auction';
+                track.disabled = listing.tracked === true;
+                track.addEventListener('click', async () => {
+                    track.disabled = true;
+                    const response = await postNui('trackAuction', { listingId: listing.id });
+                    const result = await response.json();
+                    if (result.success) {
+                        listing.tracked = true;
+                        track.textContent = 'Tracking Auction';
+                        auctionHome.tracking = Number(auctionHome.tracking) + 1;
+                    } else track.disabled = false;
+                });
+                actions.append(bid, place, track);
+            }
+        });
+        list.append(button);
+    });
+    if (!auctionListings.length) {
+        const empty = document.createElement('p'); empty.textContent = 'No matching horses are currently listed.'; list.append(empty);
+    } else {
+        list.querySelector('button').click();
+        list.focus();
+    }
+};
+
+const renderTrackedAuctions = () => {
+    const list = document.getElementById('auction-tracked-list');
+    const details = document.getElementById('auction-tracked-details');
+    const actions = document.getElementById('auction-tracked-actions');
+    list.replaceChildren(); details.replaceChildren(); actions.replaceChildren();
+    auctionListings.forEach((listing) => {
+        const button = document.createElement('button');
+        button.className = 'horse-list-button stable-slot';
+        button.type = 'button';
+        button.textContent = `${listing.horse.name} • $${Number(listing.currentBid || listing.price).toFixed(2)}`;
+        button.addEventListener('click', () => {
+            list.querySelectorAll('button').forEach((entry) => entry.classList.remove('active'));
+            button.classList.add('active');
+            postNui('auctionPreviewListing', { listingId: listing.id });
+            renderAuctionHorseDetails(details, listing.horse, [
+                `Current bid: $${Number(listing.currentBid || listing.price).toFixed(2)}`,
+                `Seller: ${listing.sellerName}`,
+                formatAuctionTime(listing.secondsLeft),
+            ]);
+            actions.replaceChildren();
+            const bid = document.createElement('input');
+            bid.type = 'number'; bid.min = listing.minimumBid; bid.step = '0.01'; bid.value = Number(listing.minimumBid).toFixed(2);
+            const place = document.createElement('button');
+            place.type = 'button'; place.textContent = 'Place Bid';
+            place.addEventListener('click', async () => {
+                place.disabled = true;
+                const response = await postNui('placeAuctionBid', { listingId: listing.id, amount: bid.value });
+                const result = await response.json();
+                if (result.success) document.querySelector('[data-auction-home="tracked"]').click();
+                else place.disabled = false;
+            });
+            const untrack = document.createElement('button');
+            untrack.type = 'button'; untrack.className = 'secondary'; untrack.textContent = 'Stop Tracking';
+            untrack.addEventListener('click', async () => {
+                untrack.disabled = true;
+                const response = await postNui('untrackAuction', { listingId: listing.id });
+                const result = await response.json();
+                if (result.success) {
+                    auctionListings = auctionListings.filter((entry) => entry.id !== listing.id);
+                    auctionHome.tracking = auctionListings.length;
+                    renderTrackedAuctions();
+                } else untrack.disabled = false;
+            });
+            actions.append(bid, place, untrack);
+        });
+        list.append(button);
+    });
+    if (!auctionListings.length) {
+        const empty = document.createElement('p'); empty.textContent = 'No active auctions are being tracked.'; list.append(empty);
+    }
+};
+
+const renderHeldHorses = () => {
+    const selling = document.getElementById('auction-selling-list');
+    const receiving = document.getElementById('auction-receiving-list');
+    const details = document.getElementById('auction-held-details');
+    const actions = document.getElementById('auction-held-actions');
+    selling.replaceChildren(); receiving.replaceChildren(); details.replaceChildren(); actions.replaceChildren();
+    auctionHome.selling = auctionHeld.selling.length;
+    auctionHome.receiving = auctionHeld.receiving.length;
+    auctionHome.funds = auctionHeld.funds;
+    document.getElementById('auction-funds').textContent = `$${Number(auctionHeld.funds).toFixed(2)}`;
+    document.getElementById('auction-collect-funds').disabled = Number(auctionHeld.funds) <= 0;
+
+    const selectHeld = (record, type, button) => {
+        selling.querySelectorAll('button').forEach((entry) => entry.classList.remove('active'));
+        receiving.querySelectorAll('button').forEach((entry) => entry.classList.remove('active'));
+        button.classList.add('active');
+        postNui('auctionPreviewHeldHorse', { heldId: record.id, heldType: type });
+        renderAuctionHorseDetails(details, record.horse, type === 'selling'
+            ? [`${record.listingType === 'direct' ? 'Direct Sale' : 'Auction'} • $${Number(record.currentBid || record.price).toFixed(2)}`, formatAuctionTime(record.secondsLeft)]
+            : [`Waiting reason: ${record.reason.replaceAll('_', ' ')}`]);
+        actions.replaceChildren();
+        const action = document.createElement('button');
+        action.type = 'button'; action.className = type === 'selling' ? 'danger' : '';
+        action.textContent = type === 'selling' ? 'Cancel Listing' : 'Add to Stable';
+        action.addEventListener('click', async () => {
+            action.disabled = true;
+            const response = await postNui(type === 'selling' ? 'cancelAuctionListing' : 'receiveAuctionHorse', type === 'selling' ? { listingId: record.id } : { receiveId: record.id });
+            const result = await response.json();
+            if (result.success) {
+                auctionHeld = result.held;
+                if (result.horses) auctionOwnedHorses = result.horses;
+                renderHeldHorses();
+            }
+            else action.disabled = false;
+        });
+        actions.append(action);
+    };
+    auctionHeld.selling.forEach((record) => {
+        const button = document.createElement('button'); button.className = 'horse-list-button stable-slot'; button.type = 'button'; button.textContent = `${record.horse.name} • ${record.listingType}`;
+        button.addEventListener('click', () => selectHeld(record, 'selling', button)); selling.append(button);
+    });
+    auctionHeld.receiving.forEach((record) => {
+        const button = document.createElement('button'); button.className = 'horse-list-button stable-slot'; button.type = 'button'; button.textContent = `${record.horse.name} • Waiting`;
+        button.addEventListener('click', () => selectHeld(record, 'receiving', button)); receiving.append(button);
+    });
+    if (!auctionHeld.selling.length) { const empty = document.createElement('p'); empty.textContent = 'No horses currently selling.'; selling.append(empty); }
+    if (!auctionHeld.receiving.length) { const empty = document.createElement('p'); empty.textContent = 'No horses waiting for your stable.'; receiving.append(empty); }
 };
 
 const renderWagonHorseAssignment = () => {
@@ -328,6 +671,22 @@ const updateWagonCustomizationControls = () => {
     const wagon = wagonCatalog.find((entry) => entry.model === selectedWagonModel);
     if (!wagon) return;
 
+    const wagonIndex = wagonCatalog.indexOf(wagon);
+    document.getElementById('wagon-model-name').textContent = wagon.label;
+    document.getElementById('wagon-model-type').textContent = wagon.category.charAt(0).toUpperCase() + wagon.category.slice(1);
+    document.getElementById('wagon-model-weight').textContent = `${(Number(wagon.maxWeight) / 1000).toFixed(0)} kg`;
+    document.getElementById('wagon-model-slots').textContent = wagon.slots;
+    const wagonHorseCount = document.getElementById('wagon-model-horses');
+    const hasEnoughHorses = ownedHorseCount >= Number(wagon.horseCount);
+    wagonHorseCount.textContent = wagon.horseCount;
+    wagonHorseCount.classList.toggle('enough', hasEnoughHorses);
+    wagonHorseCount.classList.toggle('insufficient', !hasEnoughHorses);
+    document.getElementById('wagon-model-price').textContent = `$${Number(wagon.price).toFixed(2)}`;
+    document.getElementById('wagon-model-number').textContent = `${wagonIndex + 1} / ${wagonCatalog.length}`;
+    document.getElementById('wagon-model-scroll').value = wagonIndex + 1;
+    document.getElementById('wagon-model-previous').disabled = wagonIndex === 0;
+    document.getElementById('wagon-model-next').disabled = wagonIndex === wagonCatalog.length - 1;
+
     const controls = [
         ['wagon-livery', 'wagon-livery-value', wagon.livery, wagonCustomizationValues.livery, (value) => value === -1 ? 'Default' : `Style ${value}`],
         ['wagon-tint', 'wagon-tint-value', wagon.tint, wagonCustomizationValues.tint, (value) => `Color ${value}`],
@@ -361,15 +720,7 @@ const updateWagonCustomizationControls = () => {
         * Number(wagonCustomizationPrices.extras);
     if (wagonCustomizationValues.lantern !== wagonOriginalCustomization.lantern) price += Number(wagonCustomizationPrices.lanterns);
 
-    document.getElementById('wagon-customize-description').textContent = wagon.description;
     document.getElementById('wagon-price').textContent = `$${price.toFixed(2)}`;
-
-    const hasEnoughHorses = ownedHorseCount >= Number(wagon.horseCount);
-    const horsesNeeded = document.getElementById('wagon-horses-needed');
-    horsesNeeded.classList.toggle('enough', hasEnoughHorses);
-    horsesNeeded.classList.toggle('insufficient', !hasEnoughHorses);
-    document.getElementById('wagon-horses-needed-count').textContent = wagon.horseCount;
-    document.getElementById('wagon-horses-needed-warning').hidden = hasEnoughHorses;
 };
 
 const renderWagonCustomization = (data) => {
@@ -397,52 +748,10 @@ const renderWagonCustomization = (data) => {
         lantern: wagonCustomizationValues.lantern,
     };
 
-    const modelList = document.getElementById('wagon-model-list');
-    modelList.replaceChildren();
-    wagonCatalog.forEach((wagon) => {
-        const button = document.createElement('button');
-        button.className = 'wagon-model-button';
-        button.type = 'button';
-        button.dataset.wagonModel = wagon.model;
-        button.classList.toggle('active', wagon.model === selectedWagonModel);
-
-        const name = document.createElement('strong');
-        name.textContent = wagon.label;
-        const price = document.createElement('small');
-        price.textContent = `$${Number(wagon.price).toFixed(2)}`;
-        button.append(name, price);
-
-        button.addEventListener('click', async () => {
-            if (wagonCustomizationMode !== 'buy' || wagon.model === selectedWagonModel) return;
-            const response = await postNui('selectWagonModel', { model: wagon.model });
-            const result = await response.json();
-            if (!result.success) return;
-
-            selectedWagonModel = wagon.model;
-            wagonCustomizationValues = {
-                livery: Number(result.livery),
-                tint: Number(result.tint),
-                extra: Number(result.extra),
-                extras: [],
-                lantern: result.lantern,
-            };
-            wagonOriginalCustomization = {
-                livery: wagonCustomizationValues.livery,
-                tint: wagonCustomizationValues.tint,
-                extras: [],
-                lantern: 0,
-            };
-            document.getElementById('wagon-name').value = wagon.label;
-            document.querySelectorAll('.wagon-model-button').forEach((modelButton) => {
-                modelButton.classList.toggle('active', modelButton.dataset.wagonModel === wagon.model);
-            });
-            updateWagonCustomizationControls();
-        });
-        modelList.append(button);
-    });
+    const modelScroll = document.getElementById('wagon-model-scroll');
+    modelScroll.max = wagonCatalog.length;
 
     document.getElementById('wagon-model-browser').hidden = data.mode !== 'buy';
-    document.getElementById('wagon-horses-needed').hidden = data.mode !== 'buy';
     document.getElementById('wagon-name').parentElement.hidden = data.mode !== 'buy';
     document.getElementById('wagon-name').value = data.selected.name;
     document.getElementById('wagon-price-row').hidden = false;
@@ -451,6 +760,44 @@ const renderWagonCustomization = (data) => {
     document.getElementById('wagon-customize-save').textContent = data.mode === 'buy' ? 'Buy Wagon' : 'Save Customization';
     updateWagonCustomizationControls();
 };
+
+const selectWagonCatalogIndex = async (wagonIndex) => {
+    const wagon = wagonCatalog[wagonIndex];
+    if (wagonCustomizationMode !== 'buy' || !wagon || wagon.model === selectedWagonModel) return;
+
+    const response = await postNui('selectWagonModel', { model: wagon.model });
+    const result = await response.json();
+    if (!result.success) return;
+
+    selectedWagonModel = wagon.model;
+    wagonCustomizationValues = {
+        livery: Number(result.livery),
+        tint: Number(result.tint),
+        extra: Number(result.extra),
+        extras: [],
+        lantern: result.lantern,
+    };
+    wagonOriginalCustomization = {
+        livery: wagonCustomizationValues.livery,
+        tint: wagonCustomizationValues.tint,
+        extras: [],
+        lantern: 0,
+    };
+    document.getElementById('wagon-name').value = wagon.label;
+    updateWagonCustomizationControls();
+};
+
+document.getElementById('wagon-model-scroll').addEventListener('change', (event) => {
+    selectWagonCatalogIndex(Number(event.target.value) - 1);
+});
+
+document.getElementById('wagon-model-previous').addEventListener('click', () => {
+    selectWagonCatalogIndex(wagonCatalog.findIndex((wagon) => wagon.model === selectedWagonModel) - 1);
+});
+
+document.getElementById('wagon-model-next').addEventListener('click', () => {
+    selectWagonCatalogIndex(wagonCatalog.findIndex((wagon) => wagon.model === selectedWagonModel) + 1);
+});
 
 const selectManagedHorse = (horseId, updatePreview = true) => {
     const selectedHorse = managedHorses.find((horse) => horse.id === horseId);
@@ -493,7 +840,12 @@ const selectManagedWagon = (wagonId, updatePreview = true) => {
     });
     document.querySelectorAll('.horse-list-button').forEach((button) => button.classList.remove('active'));
     document.getElementById('managed-wagon-name').textContent = selectedWagon.name;
-    document.getElementById('managed-wagon-model').textContent = selectedWagon.label;
+    document.getElementById('managed-wagon-model').textContent = selectedWagon.needsRepair
+        ? `${selectedWagon.label} • Needs repair`
+        : selectedWagon.label;
+    const repairButton = document.querySelector('[data-wagon-action="repair"]');
+    repairButton.hidden = !selectedWagon.needsRepair;
+    repairButton.textContent = `Repair Wagon - $${Number(selectedWagon.repairPrice).toFixed(2)}`;
     document.getElementById('camera-help').textContent = 'Hold right mouse and drag in any direction to orbit around the wagon.';
     if (updatePreview) postNui('selectManagedWagon', { wagonId });
 };
@@ -567,7 +919,9 @@ const renderManagedStable = (horses, selectedHorseId, wagons, selectedWagonId, h
         const name = document.createElement('span');
         name.textContent = wagon.name;
         const model = document.createElement('small');
-        model.textContent = wagon.ready ? wagon.label : `${wagon.label} • Horses needed`;
+        model.textContent = wagon.needsRepair
+            ? `${wagon.label} • Needs repair`
+            : wagon.ready ? wagon.label : `${wagon.label} • Horses needed`;
         slot.append(name, model);
         if (wagon.active) {
             const active = document.createElement('em');
@@ -613,6 +967,62 @@ const renderManagedStable = (horses, selectedHorseId, wagons, selectedWagonId, h
 };
 
 window.addEventListener('message', (event) => {
+    if (event.data.action === 'openHorseAuction') {
+        auctionHome = event.data.home;
+        auctionOwnedHorses = event.data.horses || [];
+        document.getElementById('auction-panel').hidden = false;
+        document.getElementById('manage-eyebrow').textContent = 'Stable Market';
+        document.getElementById('manage-title').textContent = 'Horse Auction';
+        showManageMain(false);
+        customizePanel.hidden = true;
+        wagonCustomizePanel.hidden = true;
+        wagonHorsesPanel.hidden = true;
+        document.getElementById('auction-panel').hidden = false;
+        renderAuctionHome();
+        return;
+    }
+
+    if (event.data.action === 'refreshAuctionHeld') {
+        auctionHeld = event.data.held || { selling: [], receiving: [], funds: 0 };
+        auctionHome.selling = auctionHeld.selling.length;
+        auctionHome.receiving = auctionHeld.receiving.length;
+        renderHeldHorses();
+        showAuctionSection('auction-held');
+        return;
+    }
+
+    if (event.data.action === 'returnFromHorseAuction') {
+        document.getElementById('auction-panel').hidden = true;
+        document.getElementById('manage-eyebrow').textContent = 'Stable Management';
+        document.getElementById('manage-title').textContent = 'Manage Stable';
+        showManageMain(true);
+        renderManagedStable(event.data.horses, event.data.selectedHorseId, event.data.wagons, event.data.selectedWagonId, event.data.horseSlots, event.data.wagonSlots, event.data.debt);
+        return;
+    }
+
+    if (event.data.action === 'openStableInventory') {
+        horseWindow.classList.remove('visible');
+        wildRegisterWindow.classList.remove('visible');
+        manageWindow.classList.remove('visible');
+        renderStableInventory(event.data.inventory);
+        stableInventoryWindow.classList.add('visible');
+        stableInventoryWindow.setAttribute('aria-hidden', 'false');
+        return;
+    }
+
+    if (event.data.action === 'closeStableInventory') {
+        stableInventoryWindow.classList.remove('visible');
+        stableInventoryWindow.setAttribute('aria-hidden', 'true');
+        return;
+    }
+
+    if (event.data.action === 'closeWildHorseRegistration') {
+        wildRegisterWindow.classList.remove('visible');
+        wildRegisterWindow.setAttribute('aria-hidden', 'true');
+        wildRegisterConfirm.disabled = false;
+        return;
+    }
+
     if (event.data.action === 'closeHorse') {
         horseWindow.classList.remove('visible');
         horseWindow.setAttribute('aria-hidden', 'true');
@@ -630,6 +1040,7 @@ window.addEventListener('message', (event) => {
         manageWindow.setAttribute('aria-hidden', 'true');
         rotatingCamera = false;
         manageCard.classList.remove('customizing');
+        document.getElementById('auction-panel').hidden = true;
         closeManageModals();
         showManageMain(true);
         return;
@@ -637,9 +1048,11 @@ window.addEventListener('message', (event) => {
 
     if (event.data.action === 'openHorseManager') {
         horseWindow.classList.remove('visible');
+        wildRegisterWindow.classList.remove('visible');
         cameraZoom.value = event.data.cameraZoom;
         manageCard.classList.remove('customizing');
         closeManageModals();
+        document.getElementById('auction-panel').hidden = true;
         document.getElementById('manage-eyebrow').textContent = 'Stable Management';
         document.getElementById('manage-title').textContent = 'Manage Stable';
         showManageMain(true);
@@ -652,6 +1065,7 @@ window.addEventListener('message', (event) => {
 
     if (event.data.action === 'openHorseCustomization') {
         horseWindow.classList.remove('visible');
+        wildRegisterWindow.classList.remove('visible');
         horseWindow.setAttribute('aria-hidden', 'true');
         closeBuyModal();
         closeManageModals();
@@ -683,6 +1097,7 @@ window.addEventListener('message', (event) => {
 
     if (event.data.action === 'openWagonCustomization') {
         horseWindow.classList.remove('visible');
+        wildRegisterWindow.classList.remove('visible');
         horseWindow.setAttribute('aria-hidden', 'true');
         closeBuyModal();
         closeManageModals();
@@ -753,6 +1168,7 @@ window.addEventListener('message', (event) => {
         document.getElementById('wagon-stats-model').textContent = event.data.label;
         document.getElementById('wagon-stats-horses').textContent = event.data.horseCount;
         document.getElementById('wagon-stats-slots').textContent = event.data.slots;
+        document.getElementById('wagon-stats-current-weight').textContent = `${(Number(event.data.currentWeight) / 1000).toFixed(0)} kg`;
         document.getElementById('wagon-stats-weight').textContent = `${(Number(event.data.maxWeight) / 1000).toFixed(0)} kg`;
         document.getElementById('wagon-stats-price').textContent = `$${Number(event.data.price).toFixed(2)}`;
         document.getElementById('wagon-stats-modal').hidden = false;
@@ -765,20 +1181,54 @@ window.addEventListener('message', (event) => {
         return;
     }
 
+    if (event.data.action === 'openWildHorseRegistration') {
+        const horse = event.data.horse;
+        const quote = event.data.quote;
+        horseWindow.classList.remove('visible');
+        manageWindow.classList.remove('visible');
+        closeBuyModal();
+
+        document.getElementById('wild-register-breed').textContent = horse.breed;
+        document.getElementById('wild-register-gender').textContent = horse.gender === 'male' ? 'Male' : 'Female';
+        document.getElementById('wild-register-health').textContent = `${horse.health}${wildModifierText(horse, 'health')}`;
+        document.getElementById('wild-register-stamina').textContent = `${horse.stamina}${wildModifierText(horse, 'stamina')}`;
+        document.getElementById('wild-register-agility').textContent = `${horse.agility}${wildModifierText(horse, 'agility')}`;
+        document.getElementById('wild-register-speed').textContent = `${horse.speed}${wildModifierText(horse, 'speed')}`;
+        document.getElementById('wild-register-acceleration').textContent = `${horse.acceleration}${wildModifierText(horse, 'acceleration')}`;
+        document.getElementById('wild-register-strength').textContent = `${horse.strength}${wildModifierText(horse, 'strength')}`;
+        document.getElementById('wild-register-carry-weight').textContent = `${horse.carryWeight} kg`;
+        document.getElementById('wild-register-pull-weight').textContent = `${horse.pullWeight} kg`;
+        document.getElementById('wild-register-fee').textContent = `$${Number(quote.registrationFee).toFixed(2)}`;
+        document.getElementById('wild-register-slot-fee').textContent = `$${Number(quote.slotFee).toFixed(2)}`;
+        document.getElementById('wild-register-total').textContent = `$${Number(quote.total).toFixed(2)}`;
+        document.getElementById('wild-register-slot-row').hidden = !quote.slotRequired;
+        document.getElementById('wild-register-slot-note').hidden = !quote.slotRequired;
+        document.getElementById('wild-register-name').value = '';
+        wildRegisterConfirm.textContent = quote.slotRequired ? 'Register & Buy Slot' : 'Register Horse';
+        wildRegisterConfirm.disabled = false;
+
+        wildRegisterWindow.classList.add('visible');
+        wildRegisterWindow.setAttribute('aria-hidden', 'false');
+        document.getElementById('wild-register-name').focus();
+        requestAnimationFrame(updateScaleLimit);
+        return;
+    }
+
     if (event.data.action !== 'openHorse') return;
 
     const horse = event.data.horse;
     closeBuyModal();
     manageWindow.classList.remove('visible');
+    wildRegisterWindow.classList.remove('visible');
     document.getElementById('breed').textContent = horse.name || horse.breed;
     document.getElementById('breed-summary').textContent = horse.breed;
     document.getElementById('tame-level').textContent = horse.tameLevel;
-    document.getElementById('health').textContent = horse.health;
-    document.getElementById('stamina').textContent = horse.stamina;
-    document.getElementById('agility').textContent = horse.agility;
-    document.getElementById('speed').textContent = horse.speed;
-    document.getElementById('acceleration').textContent = horse.acceleration;
-    document.getElementById('strength').textContent = horse.strength;
+    document.getElementById('health').textContent = `${horse.health}${wildModifierText(horse, 'health')}`;
+    document.getElementById('stamina').textContent = `${horse.stamina}${wildModifierText(horse, 'stamina')}`;
+    document.getElementById('agility').textContent = `${horse.agility}${wildModifierText(horse, 'agility')}`;
+    document.getElementById('speed').textContent = `${horse.speed}${wildModifierText(horse, 'speed')}`;
+    document.getElementById('acceleration').textContent = `${horse.acceleration}${wildModifierText(horse, 'acceleration')}`;
+    document.getElementById('strength').textContent = `${horse.strength}${wildModifierText(horse, 'strength')}`;
     document.getElementById('carry-weight').textContent = `${horse.carryWeight} kg`;
     document.getElementById('pull-weight').textContent = `${horse.pullWeight} kg`;
     document.getElementById('price').textContent = `$${Number(horse.price).toFixed(2)}`;
@@ -792,8 +1242,93 @@ window.addEventListener('message', (event) => {
 
 document.getElementById('close').addEventListener('click', closeHorse);
 document.getElementById('leave').addEventListener('click', closeHorse);
+document.getElementById('wild-register-close').addEventListener('click', closeWildHorseRegistration);
+document.getElementById('wild-register-cancel').addEventListener('click', closeWildHorseRegistration);
+document.getElementById('open-horse-auction').addEventListener('click', () => postNui('openHorseAuction'));
+
+['health', 'stamina', 'agility', 'speed', 'acceleration', 'strength'].forEach((stat) => {
+    const label = stat.charAt(0).toUpperCase() + stat.slice(1);
+    ['minimum', 'maximum'].forEach((range) => {
+        const field = document.createElement('label');
+        field.textContent = `${range === 'minimum' ? 'Min' : 'Max'} ${label}`;
+        const input = document.createElement('input');
+        input.id = `auction-${range}-${stat}`; input.type = 'number'; input.min = '0'; input.max = '9';
+        field.append(input); document.getElementById('auction-stat-filter-grid').append(field);
+    });
+});
+
+document.querySelectorAll('[data-auction-home]').forEach((button) => button.addEventListener('click', async () => {
+    const section = button.dataset.auctionHome;
+    if (section === 'buy') showAuctionSection('auction-buy');
+    if (section === 'sell') { selectedAuctionHorseId = 0; renderAuctionSellHorses(); document.getElementById('auction-listing-form').hidden = true; showAuctionSection('auction-sell'); }
+    if (section === 'held') {
+        const response = await postNui('getHeldHorses'); const result = await response.json();
+        auctionHeld = result.held; renderHeldHorses(); showAuctionSection('auction-held');
+    }
+    if (section === 'tracked') {
+        const response = await postNui('getTrackedAuctions'); const result = await response.json();
+        auctionListings = result.listings || [];
+        auctionHome.tracking = auctionListings.length;
+        renderTrackedAuctions(); showAuctionSection('auction-tracked');
+    }
+}));
+
+document.querySelectorAll('[data-auction-type]').forEach((button) => button.addEventListener('click', () => {
+    auctionBuyType = button.dataset.auctionType;
+    document.querySelectorAll('[data-auction-type]').forEach((entry) => entry.classList.toggle('active', entry === button));
+}));
+
+document.querySelectorAll('[data-auction-sell-type]').forEach((button) => button.addEventListener('click', () => {
+    auctionSellType = button.dataset.auctionSellType;
+    document.querySelectorAll('[data-auction-sell-type]').forEach((entry) => entry.classList.toggle('active', entry === button));
+    document.getElementById('auction-price-label').firstChild.textContent = auctionSellType === 'direct' ? 'Sale Price' : 'Starting Bid';
+}));
+
+document.getElementById('auction-list-days').addEventListener('input', (event) => {
+    document.getElementById('auction-listing-fee').textContent = `Listing fee: $${Math.max(0, Number(event.target.value)).toFixed(2)}`;
+});
+
+document.getElementById('auction-create-listing').addEventListener('click', async () => {
+    const button = document.getElementById('auction-create-listing'); button.disabled = true;
+    const response = await postNui('createAuctionListing', { horseId: selectedAuctionHorseId, listingType: auctionSellType, price: document.getElementById('auction-list-price').value, days: document.getElementById('auction-list-days').value });
+    const result = await response.json(); button.disabled = false;
+    if (result.success) auctionOwnedHorses = auctionOwnedHorses.filter((horse) => horse.id !== selectedAuctionHorseId);
+});
+
+document.getElementById('auction-view-horses').addEventListener('click', async () => {
+    const response = await postNui('getAuctionListings', { listingType: auctionBuyType, filters: getAuctionFilters() });
+    const result = await response.json();
+    auctionListings = result.listings || [];
+    showAuctionSection('auction-results');
+    renderAuctionListings();
+});
+
+document.getElementById('auction-result-list').addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    const buttons = [...document.querySelectorAll('#auction-result-list button[data-listing-index]')];
+    if (!buttons.length) return;
+    event.preventDefault();
+    const selectedIndex = buttons.findIndex((button) => button.classList.contains('active'));
+    const movement = event.key === 'ArrowDown' ? 1 : -1;
+    const nextIndex = Math.max(0, Math.min(buttons.length - 1, (selectedIndex < 0 ? 0 : selectedIndex) + movement));
+    buttons[nextIndex].click();
+    buttons[nextIndex].focus();
+});
+
+document.getElementById('auction-collect-funds').addEventListener('click', async () => {
+    const response = await postNui('collectAuctionFunds'); const result = await response.json();
+    if (result.success) { auctionHeld.funds = 0; renderHeldHorses(); }
+});
+
+document.getElementById('auction-back').addEventListener('click', () => {
+    if (!document.getElementById('auction-home').hidden) postNui('closeHorseAuction');
+    else renderAuctionHome();
+});
 document.getElementById('manage-close').addEventListener('click', closeHorseManager);
 document.getElementById('manage-leave').addEventListener('click', closeHorseManager);
+document.getElementById('stable-inventory-close').addEventListener('click', closeStableInventory);
+document.getElementById('transfer-stable-horse').addEventListener('click', () => transferStableInventory('horse'));
+document.getElementById('transfer-stable-wagon').addEventListener('click', () => transferStableInventory('wagon'));
 document.getElementById('wagon-horses-back').addEventListener('click', () => postNui('closeWagonHorseAssignment'));
 document.getElementById('rename-cancel').addEventListener('click', closeManageModals);
 document.getElementById('sell-cancel').addEventListener('click', closeManageModals);
@@ -844,6 +1379,16 @@ document.getElementById('buy-confirm').addEventListener('click', async () => {
     button.disabled = false;
 });
 
+wildRegisterConfirm.addEventListener('click', async () => {
+    const name = document.getElementById('wild-register-name').value.trim();
+    if (!name) return;
+
+    wildRegisterConfirm.disabled = true;
+    const response = await postNui('registerWildHorse', { name });
+    const result = await response.json();
+    if (!result.success) wildRegisterConfirm.disabled = false;
+});
+
 document.querySelectorAll('[data-horse-action]').forEach((button) => {
     button.addEventListener('click', async () => {
         const action = button.dataset.horseAction;
@@ -853,6 +1398,7 @@ document.querySelectorAll('[data-horse-action]').forEach((button) => {
         if (action === 'rename') {
             selectedManageType = 'horse';
             const renameInput = document.getElementById('rename-input');
+            renameInput.maxLength = 32;
             renameInput.value = selectedHorse.name;
             document.getElementById('rename-title').textContent = 'Rename Horse';
             document.getElementById('rename-label').textContent = 'Horse Name';
@@ -894,6 +1440,7 @@ document.querySelectorAll('[data-wagon-action]').forEach((button) => {
         if (action === 'rename') {
             selectedManageType = 'wagon';
             const renameInput = document.getElementById('rename-input');
+            renameInput.maxLength = 100;
             renameInput.value = selectedWagon.name;
             document.getElementById('rename-title').textContent = 'Rename Wagon';
             document.getElementById('rename-label').textContent = 'Wagon Name';
@@ -1093,6 +1640,18 @@ document.addEventListener('keyup', (event) => {
     }
     if (!customizePanel.hidden) {
         postNui('cancelHorseCustomization');
+        return;
+    }
+    if (wildRegisterWindow.classList.contains('visible')) {
+        closeWildHorseRegistration();
+        return;
+    }
+    if (stableInventoryWindow.classList.contains('visible')) {
+        closeStableInventory();
+        return;
+    }
+    if (!document.getElementById('auction-panel').hidden) {
+        postNui('closeHorseAuction');
         return;
     }
     if (horseWindow.classList.contains('visible')) closeHorse();

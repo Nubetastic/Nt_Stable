@@ -17,17 +17,20 @@ shared_scripts {
 client_scripts {
     'client/blips.lua',
     'client/stalls.lua',
+    'client/findRoad.lua',
     'client/riding.lua',
     'client/ridingWagon.lua',
+    'client/training.lua',
     'client/manageHorses.lua',
+    'client/wildHorseRegistration.lua',
     'client/stableZones.lua',
-    'client/wagonTest.lua',
 }
 
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
     'server/stalls.lua',
     'server/playerHorses.lua',
+    'server/auction.lua',
 }
 
 files {

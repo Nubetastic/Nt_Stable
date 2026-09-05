@@ -16,16 +16,23 @@ Config.StableSlots = {
         BaseSlotPrice = 50,
         CostPerHour = 0.50,
     },
+    StableOverflow = {
+        NonChargeWeight = 20, -- the first 20kg of used storage has no hourly fee.
+        BaseWeightPrice = 10, -- charge once for every 10kg of used storage over the free weight.
+        CostPerHour = 0.5,
+        ResizeWeight = 100, -- minimum capacity and resize step in kg.
+        Slots = 200,
+    },
 }
 
-Config.SpeedWeight = {
-    MaxStatRank = 9,
-    HorseMaxSpeed = 10.0,
-    WagonMaxSpeed = 10.0,
-    BaseSpeedFactor = 0.60,
-    SpeedStatWeight = 0.40,
-    StrengthStatWeight = 0.60,
-    RatingFactor = 0.40,
-    LoadPenalty = 0.35,
-    RefreshInterval = 5000,
+Config.HorseAuction = {
+    ListingFeePerDay = 1,
+    StableCutPercent = 5,
+    MinimumDays = 1,
+    MaximumDays = 30,
+    MinimumPrice = 1,
+    MaximumPrice = 100000,
+    MinimumBidIncrease = 1,
+    ExpirationInterval = 60,
+    MoneyType = 'cash',
 }

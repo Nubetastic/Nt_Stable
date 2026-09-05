@@ -5,6 +5,8 @@
     color: #eee2c5;
     --horse-ui-scale: 1.2;
     --manage-ui-scale: 1.2;
+    --manage-panel-width: 672px;
+    --manage-content-height: 83.333vh;
     --customize-base-scale: 1;
     --customize-ui-scale: 1;
 }
@@ -38,31 +40,120 @@ body {
     display: none;
     width: 100%;
     height: 100%;
-    align-items: center;
+    align-items: stretch;
     justify-content: flex-end;
-    padding: 4vh 2.5vw;
+    padding: 0;
 }
 
 .manage-window.visible {
     display: flex;
 }
 
-.manage-card {
-    position: relative;
-    width: min(470px, 90vw);
+.stable-inventory-window {
+    display: none;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+}
+
+.stable-inventory-window.visible {
+    display: flex;
+}
+
+.stable-inventory-card {
+    width: min(660px, 94vw);
     max-height: 88vh;
     padding: 26px;
     border: 1px solid rgba(220, 194, 139, 0.72);
     border-radius: 5px;
-    background: linear-gradient(180deg, rgba(28, 24, 18, 0.97), rgba(13, 12, 10, 0.97));
+    background: linear-gradient(180deg, rgba(28, 24, 18, 0.98), rgba(13, 12, 10, 0.98));
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.68);
-    transform: scale(var(--manage-ui-scale));
-    transform-origin: right center;
+    overflow: hidden;
+}
+
+.stable-inventory-fee {
+    margin: 8px 0;
+    color: #e56d63;
+    font-weight: 700;
+}
+
+.stable-inventory-description,
+.stable-inventory-empty {
+    color: #bdb29c;
+    line-height: 1.45;
+}
+
+.stable-inventory-items {
+    display: grid;
+    gap: 6px;
+    max-height: 48vh;
+    margin: 18px 0;
     overflow-y: auto;
 }
 
-.manage-card.customizing {
-    transform: scale(var(--customize-ui-scale));
+.stable-inventory-item {
+    display: grid;
+    grid-template-columns: 24px 48px 1fr;
+    align-items: center;
+    gap: 12px;
+    min-height: 58px;
+    padding: 5px 10px;
+    border: 1px solid rgba(119, 106, 80, 0.55);
+    background: rgba(52, 44, 32, 0.55);
+    cursor: pointer;
+}
+
+.stable-inventory-item img {
+    width: 46px;
+    height: 46px;
+    object-fit: contain;
+}
+
+.stable-inventory-item input {
+    width: 18px;
+    height: 18px;
+    accent-color: #d9bd7d;
+}
+
+.stable-inventory-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.stable-inventory-actions button:disabled {
+    color: #716b60;
+    border-color: #4f493e;
+    background: #211e19;
+    cursor: not-allowed;
+}
+
+.manage-card {
+    position: relative;
+    width: min(var(--manage-panel-width), 94vw);
+    height: 100vh;
+    border: 0;
+    border-left: 1px solid rgba(220, 194, 139, 0.72);
+    background: linear-gradient(180deg, rgba(28, 24, 18, 0.97), rgba(13, 12, 10, 0.97));
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.68);
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.manage-card-content {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 560px;
+    min-height: var(--manage-content-height);
+    margin-left: auto;
+    padding: 26px;
+    zoom: var(--manage-ui-scale);
+}
+
+.manage-card.customizing .manage-card-content {
+    zoom: var(--customize-ui-scale);
 }
 
 .camera-zoom {
@@ -334,66 +425,90 @@ body {
     background: #453824;
 }
 
-.wagon-browser-label {
-    display: block;
-    margin: 14px 0 8px;
-    color: #d9bd7d;
-}
-
-.wagon-horses-needed {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    margin-top: 12px;
-}
-
-.wagon-horses-needed[hidden] {
-    display: none;
-}
-
-.wagon-horses-needed.enough strong {
+.wagon-model-display strong.enough {
     color: #7de18a;
 }
 
-.wagon-horses-needed.insufficient strong,
-.wagon-horses-needed small {
+.wagon-model-display strong.insufficient {
     color: #e17d7d;
 }
 
-.wagon-model-list {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    padding: 0 0 8px;
+.wagon-model-display {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    column-gap: 0;
+    row-gap: 2px;
+    margin-top: 14px;
+    border: 1px solid rgba(220, 194, 139, 0.3);
+    background: rgba(43, 37, 28, 0.65);
 }
 
-.wagon-model-button {
-    flex: 0 0 145px;
-    height: auto;
-    min-height: 58px;
-    padding: 9px 11px;
-    text-align: left;
+.wagon-model-display span,
+.wagon-model-display strong {
+    padding: 7px 9px;
 }
 
-.wagon-model-button strong,
-.wagon-model-button small {
-    display: block;
+.wagon-model-display span:nth-child(4n + 1),
+.wagon-model-display strong:nth-child(4n + 2) {
+    background: rgba(220, 194, 139, 0.08);
 }
 
-.wagon-model-button small {
-    margin-top: 4px;
+.wagon-model-display span:nth-child(4n + 3),
+.wagon-model-display strong:nth-child(4n + 4) {
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.wagon-model-display span {
     color: #bdb29c;
 }
 
-.wagon-model-button.active {
-    border-color: #d9bd7d;
-    background: #453824;
+.wagon-model-display strong {
+    color: #eee2c5;
+    text-align: right;
+}
+
+.wagon-model-navigation {
+    margin-top: 10px;
+}
+
+.wagon-model-navigation label {
+    display: block;
+    color: #bdb29c;
+}
+
+.wagon-model-navigation label strong {
+    color: #d9bd7d;
+}
+
+#wagon-model-scroll {
+    width: 100%;
+    margin: 8px 0;
+}
+
+.wagon-model-arrows {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
 }
 
 .wagon-customize-options {
     display: grid;
+    align-content: start;
     gap: 9px;
+    height: 340px;
     margin-top: 14px;
+    overflow-y: auto;
+    padding-right: 5px;
+}
+
+#wagon-lantern-option[hidden],
+#wagon-extra-option[hidden] {
+    display: grid;
+    visibility: hidden;
+}
+
+#wagon-model-browser {
+    min-height: 245px;
 }
 
 .wagon-extra-toggle {
@@ -417,10 +532,25 @@ body {
 .wagon-stats-grid {
     display: grid;
     grid-template-columns: 1fr auto;
-    gap: 10px 18px;
-    padding: 14px;
+    column-gap: 0;
+    row-gap: 2px;
     border: 1px solid rgba(220, 194, 139, 0.3);
     background: rgba(43, 37, 28, 0.65);
+}
+
+.wagon-stats-grid span,
+.wagon-stats-grid strong {
+    padding: 7px 9px;
+}
+
+.wagon-stats-grid span:nth-child(4n + 1),
+.wagon-stats-grid strong:nth-child(4n + 2) {
+    background: rgba(220, 194, 139, 0.08);
+}
+
+.wagon-stats-grid span:nth-child(4n + 3),
+.wagon-stats-grid strong:nth-child(4n + 4) {
+    background: rgba(255, 255, 255, 0.025);
 }
 
 .wagon-stats-grid span {
@@ -429,6 +559,7 @@ body {
 
 .wagon-stats-grid strong {
     color: #eee2c5;
+    text-align: right;
 }
 
 .modal-actions.single-action {
@@ -460,6 +591,175 @@ body {
     margin-top: 12px;
 }
 
+.auction-entry {
+    margin: auto 0 0;
+}
+
+footer[data-manage-main] {
+    margin-top: 0;
+}
+
+#auction-panel,
+#wagon-horses-panel,
+#customize-panel,
+#wagon-customize-panel {
+    flex: 1;
+    flex-direction: column;
+}
+
+#auction-panel:not([hidden]),
+#wagon-horses-panel:not([hidden]),
+#customize-panel:not([hidden]),
+#wagon-customize-panel:not([hidden]) {
+    display: flex;
+}
+
+.auction-actions,
+.auction-type-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+    margin: 14px 0;
+}
+
+#auction-home {
+    grid-template-columns: 1fr;
+}
+
+.auction-type-row button.active {
+    color: #17130d;
+    border-color: #e4ca91;
+    background: #d9bd7d;
+}
+
+.auction-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin: 14px 0;
+}
+
+.auction-filters label {
+    display: grid;
+    gap: 5px;
+    color: #cbbd9f;
+    font-size: 13px;
+}
+
+.auction-filters input,
+.auction-actions input {
+    width: 100%;
+    padding: 9px 10px;
+    color: #eee2c5;
+    border: 1px solid rgba(119, 106, 80, 0.75);
+    background: rgba(25, 21, 16, 0.92);
+}
+
+.auction-stat-filters {
+    margin: 12px 0;
+    color: #d9bd7d;
+}
+
+.auction-stat-filters summary {
+    cursor: pointer;
+}
+
+.auction-horse-details {
+    margin: 14px 0;
+    padding: 12px;
+    border: 1px solid rgba(119, 106, 80, 0.55);
+    background: rgba(52, 44, 32, 0.4);
+}
+
+.auction-browser {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 18px;
+    align-items: start;
+}
+
+.auction-browser h2 {
+    margin-top: 8px;
+}
+
+.auction-browser-list,
+.auction-browser-details {
+    min-width: 0;
+}
+
+.auction-browser-details {
+    padding-top: 10px;
+    border-top: 1px solid rgba(220, 194, 139, 0.45);
+}
+
+#auction-result-list {
+    max-height: 28vh;
+    padding: 3px;
+    overflow-y: auto;
+    outline: none;
+}
+
+#auction-result-list:focus {
+    box-shadow: 0 0 0 1px rgba(217, 189, 125, 0.55);
+}
+
+#auction-result-list .horse-list-button {
+    width: 100%;
+    text-align: left;
+}
+
+.auction-horse-details:empty {
+    display: none;
+}
+
+.auction-horse-details h2,
+#auction-held h2 {
+    margin: 14px 0 8px;
+    color: #e4ca91;
+}
+
+.auction-horse-details p {
+    margin: 7px 0;
+    color: #bdb29c;
+}
+
+.auction-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    column-gap: 0;
+    row-gap: 2px;
+    border: 1px solid rgba(220, 194, 139, 0.3);
+    background: rgba(43, 37, 28, 0.65);
+}
+
+.auction-stats-grid span,
+.auction-stats-grid strong {
+    padding: 7px 9px;
+}
+
+.auction-stats-grid span:nth-child(4n + 1),
+.auction-stats-grid strong:nth-child(4n + 2) {
+    background: rgba(220, 194, 139, 0.08);
+}
+
+.auction-stats-grid span:nth-child(4n + 3),
+.auction-stats-grid strong:nth-child(4n + 4) {
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.auction-stats-grid span {
+    color: #bdb29c;
+}
+
+.auction-stats-grid strong {
+    color: #eee2c5;
+    text-align: right;
+}
+
+#auction-panel footer {
+    margin-top: auto;
+}
+
 .manage-actions button:last-child {
     grid-column: 1 / -1;
 }
@@ -487,9 +787,13 @@ body {
 
 .modal-content {
     width: 100%;
+    height: min(470px, calc(100% - 48px));
     padding: 22px;
     border: 1px solid rgba(220, 194, 139, 0.72);
     background: rgba(28, 24, 18, 0.99);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
 }
 
 .modal-content h2 {
@@ -511,6 +815,22 @@ body {
     margin-top: 14px;
 }
 
+.wagon-name-field strong {
+    font-weight: 700;
+}
+
+.wagon-name-field input {
+    width: 100%;
+    min-height: 80px;
+    padding: 8px 10px;
+    border: 1px solid #776a50;
+    border-radius: 3px;
+    color: #eee2c5;
+    background: #18140f;
+    font-family: inherit;
+    font-size: 16px;
+}
+
 .gender-buttons {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -524,7 +844,8 @@ body {
 }
 
 .modal-content input,
-.modal-content select {
+.modal-content select,
+.wild-register-name input {
     width: 100%;
     min-height: 40px;
     padding: 8px 10px;
@@ -534,6 +855,59 @@ body {
     background: #18140f;
     font-family: inherit;
     font-size: 16px;
+}
+
+.wild-register-name {
+    display: grid;
+    gap: 8px;
+    margin-top: 18px;
+    color: #bdb29c;
+}
+
+.wild-register-costs {
+    display: grid;
+    gap: 8px;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(220, 194, 139, 0.3);
+}
+
+.wild-register-costs div {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    color: #bdb29c;
+}
+
+.wild-register-costs strong {
+    color: #eee2c5;
+}
+
+.wild-register-costs .wild-register-total {
+    padding-top: 8px;
+    border-top: 1px solid rgba(220, 194, 139, 0.18);
+    font-size: 20px;
+}
+
+.wild-register-costs .wild-register-total strong {
+    color: #7de18a;
+}
+
+.wild-register-note {
+    margin: 10px 0 0;
+    color: #d9bd7d;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+#wild-register-slot-row[hidden] {
+    display: flex;
+    visibility: hidden;
+}
+
+#wild-register-slot-note[hidden] {
+    display: block;
+    visibility: hidden;
 }
 
 .customize-horse-summary {
@@ -649,11 +1023,17 @@ body {
     color: #7de18a;
 }
 
+.customization-save {
+    width: 100%;
+    margin-top: 10px;
+}
+
 .customize-actions {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: 1fr;
     gap: 10px;
-    margin-top: 14px;
+    margin-top: auto;
+    padding-top: 14px;
 }
 
 .modal-actions {
@@ -661,6 +1041,11 @@ body {
     grid-template-columns: repeat(2, 1fr);
     gap: 10px;
     margin-top: 18px;
+}
+
+.modal-content .modal-actions {
+    margin-top: auto;
+    padding-top: 18px;
 }
 
 .danger-text {
@@ -674,7 +1059,8 @@ body {
 
 .horse-card {
     position: relative;
-    width: min(620px, 90vw);
+    width: min(660px, 90vw);
+    height: min(680px, 88vh);
     padding: 26px;
     border: 1px solid rgba(220, 194, 139, 0.72);
     border-radius: 5px;
@@ -682,6 +1068,7 @@ body {
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.68);
     transform: scale(var(--horse-ui-scale));
     transform-origin: center center;
+    overflow-y: auto;
 }
 
 header,

@@ -7,13 +7,58 @@ ConfigStables.Blip = {
 }
 
 ConfigStables.Settings = {
-    SpawnDistance = 100,
+    SpawnDistance = 200,
+    WagonSpawnDistance = 200,
+    HorseReviveTime = 180000,
+    WagonHorseReattachDistance = 5.0,
+    HorseCallSpawnDistance = 150.0,
+    WagonCallSpawnDistance = 150.0,
     ZoneDistance = 3, -- Ox_target zone on horses.
     NpcZoneRadius = 1.5,
     StockTameLevel = 1,
     SaddleBagWeight = 20000,
     SaddleBagSlots = 20,
     SellPricePerLevel = 0.25,
+}
+
+ConfigStables.Training = {
+    CheckInterval = 1000,
+    AwardTime = 600,
+    MinimumSpeed = 0.2,
+    MaximumXP = 4000,
+    RidingXP = 10,
+    LeadingXP = 11,
+    WagonXP = {
+        [1] = 10,
+        [2] = 7,
+        [4] = 5,
+    },
+    CareCooldown = 600,
+    CareXP = {
+        petting = 1,
+        grooming = 2,
+        feeding = 2,
+    },
+}
+
+ConfigStables.RoadSpawn = {
+    MinimumDistance = 60.0,
+    NodeDistance = 20.0,
+    GridSize = 5,
+    GridGap = 5.0,
+}
+
+ConfigStables.WagonApproach = {
+    Speed = 5.0,
+    DrivingFlags = 786603,
+    StopDistance = 10.0,
+}
+
+ConfigStables.WildHorseRegistration = {
+    Fee = 25,
+    StableDistance = 10.0,
+    TamingPollInterval = 500,
+    SaddleCategory = 0xBAA7E618,
 }
 
 
