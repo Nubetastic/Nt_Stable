@@ -249,10 +249,10 @@ lib.callback.register('nt_stables:server:createAuctionListing', function(source,
     if not listingId then
         horse.citizenid = citizenid
         MySQL.insert.await([[INSERT INTO player_horses
-            (id, stable, citizenid, horseid, name, horse, dirt, horsexp, components, gender, wild, stat_modifiers, active, born)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)]], {
+            (id, stable, citizenid, horseid, name, horse, dirt, horsexp, components, gender, wild, stat_modifiers, appearance, active, born)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)]], {
             horse.id, horse.stable, citizenid, horse.horseid, horse.name, horse.horse, horse.dirt,
-            horse.horsexp, horse.components, horse.gender, horse.wild, horse.stat_modifiers, horse.born,
+            horse.horsexp, horse.components, horse.gender, horse.wild, horse.stat_modifiers, horse.appearance, horse.born,
         })
         Player.Functions.AddMoney(Config.HorseAuction.MoneyType, fee)
         return { success = false, message = 'The listing failed and your payment was refunded.' }
@@ -462,10 +462,10 @@ lib.callback.register('nt_stables:server:receiveAuctionHorse', function(source, 
         return { success = false, message = 'This horse has already been received.' }
     end
     local inserted = MySQL.insert.await([[INSERT INTO player_horses
-        (stable, citizenid, horseid, name, horse, dirt, horsexp, components, gender, wild, stat_modifiers, active, born)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)]], {
+        (stable, citizenid, horseid, name, horse, dirt, horsexp, components, gender, wild, stat_modifiers, appearance, active, born)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)]], {
         horse.stable, citizenid, horse.horseid, horse.name, horse.horse, horse.dirt, horse.horsexp,
-        horse.components, horse.gender, horse.wild, horse.stat_modifiers, horse.born,
+        horse.components, horse.gender, horse.wild, horse.stat_modifiers, horse.appearance, horse.born,
     })
     if not inserted then
         MySQL.update.await('UPDATE nt_stable_horse_receiving SET received_at = NULL WHERE id = ?', { receiveId })
@@ -473,7 +473,7 @@ lib.callback.register('nt_stables:server:receiveAuctionHorse', function(source, 
         return { success = false, message = 'The horse could not be added to your stable.' }
     end
     auctionLocks['receive_' .. tostring(receiveId)] = nil
-    return { success = true }
+    return { success = true, horseId = inserted }
 end)
 
 lib.callback.register('nt_stables:server:collectAuctionFunds', function(source)

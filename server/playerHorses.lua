@@ -31,6 +31,15 @@ CreateThread(function()
     if not MySQL.single.await("SHOW COLUMNS FROM `wagonmaker_wagons` LIKE 'needs_repair'") then
         MySQL.query.await("ALTER TABLE `wagonmaker_wagons` ADD COLUMN `needs_repair` TINYINT(1) NOT NULL DEFAULT 0")
     end
+    if not MySQL.single.await("SHOW COLUMNS FROM `wagonmaker_wagons` LIKE 'harness_tint0'") then
+        MySQL.query.await("ALTER TABLE `wagonmaker_wagons` ADD COLUMN `harness_tint0` TINYINT UNSIGNED NOT NULL DEFAULT 255")
+    end
+    if not MySQL.single.await("SHOW COLUMNS FROM `wagonmaker_wagons` LIKE 'harness_tint1'") then
+        MySQL.query.await("ALTER TABLE `wagonmaker_wagons` ADD COLUMN `harness_tint1` TINYINT UNSIGNED NOT NULL DEFAULT 255")
+    end
+    if not MySQL.single.await("SHOW COLUMNS FROM `wagonmaker_wagons` LIKE 'harness_tint2'") then
+        MySQL.query.await("ALTER TABLE `wagonmaker_wagons` ADD COLUMN `harness_tint2` TINYINT UNSIGNED NOT NULL DEFAULT 255")
+    end
     local wagonNameColumn = MySQL.single.await("SHOW COLUMNS FROM `wagonmaker_wagons` LIKE 'name'")
     local wagonNameLength = wagonNameColumn and tonumber(wagonNameColumn.Type:match('%((%d+)%)')) or 0
     if wagonNameLength < 100 then
@@ -42,6 +51,9 @@ CreateThread(function()
     if not MySQL.single.await("SHOW COLUMNS FROM `player_horses` LIKE 'stat_modifiers'") then
         MySQL.query.await("ALTER TABLE `player_horses` ADD COLUMN `stat_modifiers` LONGTEXT NULL")
     end
+    if not MySQL.single.await("SHOW COLUMNS FROM `player_horses` LIKE 'appearance'") then
+        MySQL.query.await("ALTER TABLE `player_horses` ADD COLUMN `appearance` LONGTEXT NULL")
+    end
 end)
 
 local function IncludesValue(values, selectedValue)
@@ -51,15 +63,21 @@ local function IncludesValue(values, selectedValue)
     return false
 end
 
-local function ValidateWagonCustomization(model, livery, tint, extras, lantern)
+local function ValidateWagonCustomization(model, livery, tint, harnessTint0, harnessTint1, harnessTint2, extras, lantern)
     local wagon = ConfigWagon.Wagons[model]
     if not wagon then return end
 
     livery = tonumber(livery)
     tint = tonumber(tint)
+    harnessTint0 = tonumber(harnessTint0)
+    harnessTint1 = tonumber(harnessTint1)
+    harnessTint2 = tonumber(harnessTint2)
     lantern = lantern == 0 and 0 or tostring(lantern or '')
-    if not livery or not tint or type(extras) ~= 'table' then return end
-    if livery % 1 ~= 0 or tint % 1 ~= 0 then return end
+    if not livery or not tint or not harnessTint0 or not harnessTint1 or not harnessTint2 or type(extras) ~= 'table' then return end
+    if livery % 1 ~= 0 or tint % 1 ~= 0
+        or harnessTint0 % 1 ~= 0 or harnessTint0 < 0 or harnessTint0 > 255
+        or harnessTint1 % 1 ~= 0 or harnessTint1 < 0 or harnessTint1 > 255
+        or harnessTint2 % 1 ~= 0 or harnessTint2 < 0 or harnessTint2 > 255 then return end
     if not IncludesValue(wagon.customizations.livery, livery)
         or not IncludesValue(wagon.customizations.tint, tint)
         or not IncludesValue(wagon.customizations.lanterns or { 0 }, lantern) then
@@ -73,7 +91,15 @@ local function ValidateWagonCustomization(model, livery, tint, extras, lantern)
         if not IncludesValue(validatedExtras, extra) then validatedExtras[#validatedExtras + 1] = extra end
     end
 
-    return { livery = livery, tint = tint, extras = validatedExtras, lantern = lantern }
+    return {
+        livery = livery,
+        tint = tint,
+        harnessTint0 = harnessTint0,
+        harnessTint1 = harnessTint1,
+        harnessTint2 = harnessTint2,
+        extras = validatedExtras,
+        lantern = lantern,
+    }
 end
 
 local function ValidateComponents(components)
@@ -104,6 +130,60 @@ local function ValidateComponents(components)
             if not allowedCategories[category] or not value or value % 1 ~= 0 or value < 0 then return end
             if value > 0 and not HorseComponents[category][value] then return end
             validated[category] = value
+        end
+    end
+
+    return validated
+end
+
+local function ValidateAppearance(appearance)
+    if type(appearance) ~= 'table'
+        or tonumber(appearance.version) ~= 3
+        or type(appearance.horse) ~= 'table'
+        or type(appearance.equipment) ~= 'table'
+        or type(appearance.horse.categories) ~= 'table'
+        or type(appearance.horse.components) ~= 'table'
+        or type(appearance.equipment.components) ~= 'table'
+        or #appearance.horse.categories > 64
+        or #appearance.horse.components == 0
+        or #appearance.horse.components + #appearance.equipment.components > 32
+    then
+        return
+    end
+
+    local scale = tonumber(appearance.horse.scale)
+    if not scale or scale < 0.5 or scale > 2.0 then return end
+
+    local validated = {
+        version = 3,
+        horse = {
+            scale = math.floor(scale * 100) / 100,
+            categories = {},
+            components = {},
+        },
+        equipment = {
+            components = {},
+        },
+    }
+    for _, category in ipairs(appearance.horse.categories) do
+        category = tonumber(category)
+        if not category or category % 1 ~= 0 or category < -2147483648 or category > 4294967295 then return end
+        validated.horse.categories[#validated.horse.categories + 1] = category
+    end
+
+    local fields = { 'drawable', 'albedo', 'normal', 'material', 'palette', 'tint0', 'tint1', 'tint2' }
+    for _, groupName in ipairs({ 'horse', 'equipment' }) do
+        for _, component in ipairs(appearance[groupName].components) do
+            if type(component) ~= 'table' then return end
+
+            local validatedComponent = {}
+            for _, field in ipairs(fields) do
+                local value = tonumber(component[field])
+                if not value or value % 1 ~= 0 or value < -2147483648 or value > 4294967295 then return end
+                if (field == 'tint0' or field == 'tint1' or field == 'tint2') and (value < 0 or value > 255) then return end
+                validatedComponent[field] = value
+            end
+            validated[groupName].components[#validated[groupName].components + 1] = validatedComponent
         end
     end
 
@@ -589,6 +669,32 @@ lib.callback.register('nt_stables:server:getPlayerHorses', function(source)
     })
 end)
 
+lib.callback.register('nt_stables:server:getMissingHorseAppearances', function(source)
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player then return {} end
+
+    return MySQL.query.await([[SELECT id, horse, gender, components, appearance FROM player_horses
+        WHERE citizenid = ? AND (appearance IS NULL OR appearance = '' OR appearance NOT LIKE '%"version":3%') ORDER BY id]], {
+        Player.PlayerData.citizenid,
+    })
+end)
+
+lib.callback.register('nt_stables:server:saveHorseAppearance', function(source, horseId, appearance)
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player then return false end
+
+    horseId = tonumber(horseId)
+    local validAppearance = ValidateAppearance(appearance)
+    if not horseId or not validAppearance then return false end
+
+    local updated = MySQL.update.await('UPDATE player_horses SET appearance = ? WHERE id = ? AND citizenid = ?', {
+        json.encode(validAppearance),
+        horseId,
+        Player.PlayerData.citizenid,
+    })
+    return updated and updated > 0
+end)
+
 lib.callback.register('nt_stables:server:getWildHorseRegistrationQuote', function(source, stableName)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
@@ -984,14 +1090,14 @@ lib.callback.register('nt_stables:server:setWagonHorse', function(source, wagonI
     }
 end)
 
-lib.callback.register('nt_stables:server:buyWagon', function(source, model, wagonName, livery, tint, extras, lantern)
+lib.callback.register('nt_stables:server:buyWagon', function(source, model, wagonName, livery, tint, harnessTint0, harnessTint1, harnessTint2, extras, lantern)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
 
     model = tostring(model or ''):lower()
     wagonName = tostring(wagonName or ''):match('^%s*(.-)%s*$')
     local wagonConfig = ConfigWagon.Wagons[model]
-    local customization = ValidateWagonCustomization(model, livery, tint, extras, lantern)
+    local customization = ValidateWagonCustomization(model, livery, tint, harnessTint0, harnessTint1, harnessTint2, extras, lantern)
     if not wagonConfig or not customization then
         return { success = false, message = 'Invalid wagon or customization.' }
     end
@@ -1015,6 +1121,9 @@ lib.callback.register('nt_stables:server:buyWagon', function(source, model, wago
     local price = wagonConfig.price
     if customization.livery ~= wagonConfig.customizations.livery[1] then price = price + ConfigWagon.Prices.livery end
     if customization.tint ~= wagonConfig.customizations.tint[1] then price = price + ConfigWagon.Prices.tint end
+    if customization.harnessTint0 ~= 255 or customization.harnessTint1 ~= 255 or customization.harnessTint2 ~= 255 then
+        price = price + ConfigWagon.Prices.tint
+    end
     price = price + (#customization.extras * ConfigWagon.Prices.extras)
     if customization.lantern ~= 0 then price = price + ConfigWagon.Prices.lanterns end
 
@@ -1023,13 +1132,16 @@ lib.callback.register('nt_stables:server:buyWagon', function(source, model, wago
     end
 
     local wagonId = MySQL.insert.await([[INSERT INTO wagonmaker_wagons
-        (citizenid, model, name, livery, tint, extra, extras, lantern, parking_location)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)]], {
+        (citizenid, model, name, livery, tint, harness_tint0, harness_tint1, harness_tint2, extra, extras, lantern, parking_location)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]], {
         Player.PlayerData.citizenid,
         model,
         wagonName,
         customization.livery,
         customization.tint,
+        customization.harnessTint0,
+        customization.harnessTint1,
+        customization.harnessTint2,
         0,
         json.encode(customization.extras),
         customization.lantern,
@@ -1044,17 +1156,17 @@ lib.callback.register('nt_stables:server:buyWagon', function(source, model, wago
     return { success = true, wagonId = wagonId, price = price }
 end)
 
-lib.callback.register('nt_stables:server:saveWagonCustomization', function(source, wagonId, livery, tint, extras, lantern)
+lib.callback.register('nt_stables:server:saveWagonCustomization', function(source, wagonId, livery, tint, harnessTint0, harnessTint1, harnessTint2, extras, lantern)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
 
-    local wagon = MySQL.single.await('SELECT model, livery, tint, extra, extras, lantern FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
+    local wagon = MySQL.single.await('SELECT model, livery, tint, harness_tint0, harness_tint1, harness_tint2, extra, extras, lantern FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
         tonumber(wagonId),
         Player.PlayerData.citizenid,
     })
     if not wagon then return { success = false, message = 'Wagon not found.' } end
 
-    local customization = ValidateWagonCustomization(wagon.model, livery, tint, extras, lantern)
+    local customization = ValidateWagonCustomization(wagon.model, livery, tint, harnessTint0, harnessTint1, harnessTint2, extras, lantern)
     if not customization then return { success = false, message = 'Invalid wagon customization.' } end
 
     local currentExtras = {}
@@ -1068,6 +1180,11 @@ lib.callback.register('nt_stables:server:saveWagonCustomization', function(sourc
     local price = 0
     if customization.livery ~= tonumber(wagon.livery) then price = price + ConfigWagon.Prices.livery end
     if customization.tint ~= tonumber(wagon.tint) then price = price + ConfigWagon.Prices.tint end
+    if customization.harnessTint0 ~= tonumber(wagon.harness_tint0)
+        or customization.harnessTint1 ~= tonumber(wagon.harness_tint1)
+        or customization.harnessTint2 ~= tonumber(wagon.harness_tint2) then
+        price = price + ConfigWagon.Prices.tint
+    end
     for _, extra in ipairs(customization.extras) do
         if not IncludesValue(currentExtras, extra) then price = price + ConfigWagon.Prices.extras end
     end
@@ -1079,9 +1196,12 @@ lib.callback.register('nt_stables:server:saveWagonCustomization', function(sourc
     end
 
     local updated = MySQL.update.await([[UPDATE wagonmaker_wagons
-        SET livery = ?, tint = ?, extra = 0, extras = ?, lantern = ? WHERE id = ? AND citizenid = ?]], {
+        SET livery = ?, tint = ?, harness_tint0 = ?, harness_tint1 = ?, harness_tint2 = ?, extra = 0, extras = ?, lantern = ? WHERE id = ? AND citizenid = ?]], {
         customization.livery,
         customization.tint,
+        customization.harnessTint0,
+        customization.harnessTint1,
+        customization.harnessTint2,
         json.encode(customization.extras),
         customization.lantern,
         tonumber(wagonId),
@@ -1305,12 +1425,14 @@ CreateThread(function()
     end
 end)
 
-lib.callback.register('nt_stables:server:saveHorseComponents', function(source, horseId, components)
+lib.callback.register('nt_stables:server:saveHorseComponents', function(source, horseId, components, appearance)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
 
     local validComponents = ValidateComponents(components)
     if not validComponents then return { success = false, message = 'Invalid horse customization.' } end
+    local validAppearance = ValidateAppearance(appearance)
+    if not validAppearance then return { success = false, message = 'The horse appearance could not be captured.' } end
 
     local horse = MySQL.single.await('SELECT components FROM player_horses WHERE id = ? AND citizenid = ?', {
         horseId,
@@ -1341,8 +1463,9 @@ lib.callback.register('nt_stables:server:saveHorseComponents', function(source, 
         return { success = false, message = 'You do not have enough cash for these changes.' }
     end
 
-    local updated = MySQL.update.await('UPDATE player_horses SET components = ? WHERE id = ? AND citizenid = ?', {
+    local updated = MySQL.update.await('UPDATE player_horses SET components = ?, appearance = ? WHERE id = ? AND citizenid = ?', {
         json.encode(validComponents),
+        json.encode(validAppearance),
         horseId,
         Player.PlayerData.citizenid,
     })

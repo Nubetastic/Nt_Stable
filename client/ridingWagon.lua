@@ -7,14 +7,6 @@ local wagonDriveId = 0
 local wagonMonitorId = 0
 local activeWagonContext
 local HitchWagonHorses
-local HorseComponents = lib.load('shared.horse_components')
-
-local function NetworkEntity(entity)
-    NetworkRegisterEntityAsNetworked(entity)
-    local networkId = NetworkGetNetworkIdFromEntity(entity)
-    --SetNetworkIdCanMigrate(networkId, true) -- false native do not use.
-    SetNetworkIdExistsOnAllMachines(networkId, true)
-end
 
 local function DriveWagonToPlayer()
     wagonDriveId = wagonDriveId + 1
@@ -77,44 +69,14 @@ local function DriveWagonToPlayer()
     end)
 end
 
-local function ApplyComponentTints(horse, componentCategory, tints)
-    if not tints then return end
-
-    Citizen.InvokeNative(0x4EFC1F8FF1AD94DE, horse, componentCategory.categoryHash, joaat(componentCategory.tintPalette), tints.tint0, tints.tint1, tints.tint2)
-    Citizen.InvokeNative(0xAAB86462966168CE, horse, true)
-end
-
-local function ApplyWagonHorseComponents(horse, storedComponents)
-    local components = {}
-    if type(storedComponents) == 'string' and storedComponents ~= '' then
-        local success, decoded = pcall(json.decode, storedComponents)
-        if success and type(decoded) == 'table' then components = decoded end
-    end
-
-    for _, category in ipairs(ConfigStables.Customization) do
-        if ConfigStables.RidingHorseComponents[category.key] then
-            Citizen.InvokeNative(0xD710A5007C2AC539, horse, category.categoryHash, 0)
-        else
-            local value = tonumber(components[category.key]) or 0
-            local component = value > 0 and HorseComponents[category.key][value]
-            if component then Citizen.InvokeNative(0xD3A7B003ED343FD9, horse, component.hash, true, true, false) end
-        end
-    end
-
-    Citizen.InvokeNative(0x1902C4CFCC5BE57C, horse, ConfigStables.WagonHorse.HarnessOutfit)
-    Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
-
-    for _, category in ipairs(ConfigStables.Customization) do
-        if not ConfigStables.RidingHorseComponents[category.key] then
-            ApplyComponentTints(horse, category, components[category.tintKey])
-        end
-    end
-end
-
 local function SpawnWagonHorses(wagon, wagonData)
     local wagonConfig = ConfigWagon.Wagons[wagonData.model]
     if not wagonConfig then return 0 end
     local attachedCount = 0
+
+    SetDraftVehicleAnimalsCanDetach(wagon, false)
+    SetDraftVehicleAllowDraftAnimalAutoCreation(wagon, true)
+    Wait(3000)
 
     for slot = 1, wagonConfig.horseCount do
         local harnessIndex = slot - 1
@@ -127,48 +89,48 @@ local function SpawnWagonHorses(wagon, wagonData)
         end
 
         if horseData then
-            local horseOffset = wagonConfig.horseOffsets[slot]
-            local horseCoords = GetOffsetFromEntityInWorldCoords(wagon, horseOffset.x, horseOffset.y, horseOffset.z)
-            local horseHash = joaat(horseData.horse)
             local timeout = GetGameTimer() + 10000
-            RequestModel(horseHash, false)
-            while not HasModelLoaded(horseHash) and GetGameTimer() < timeout do Wait(0) end
-
-            if HasModelLoaded(horseHash) then
-                local horse = CreatePed(horseHash, horseCoords.x, horseCoords.y, horseCoords.z, GetEntityHeading(wagon), false, true, true, true)
-                SetModelAsNoLongerNeeded(horseHash)
-                if horse ~= 0 and DoesEntityExist(horse) then
-                    SetEntityAsMissionEntity(horse, true, true)
-                    SetRandomOutfitVariation(horse, true)
-                    SetBlockingOfNonTemporaryEvents(horse, true)
-                    SetPedPromptName(horse, horseData.name)
-                    Citizen.InvokeNative(0x5653AB26C82938CF, horse, 41611, horseData.gender == 'male' and 0.0 or 1.0)
-                    Citizen.InvokeNative(0x5DA12E025D47D4E5, horse, 16, tonumber(horseData.dirt) or 0)
-                    ApplyWagonHorseComponents(horse, horseData.components)
-                    Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
-                    SetEntityVisible(horse, true)
-                    ResetEntityAlpha(horse)
-
-                    Citizen.InvokeNative(0x316CDB5B6E8F4110, horse, wagon, harnessIndex)
-                    Wait(250)
-
-                    local attachedHorse = Citizen.InvokeNative(0xA8BA0BAE0173457B, wagon, harnessIndex, Citizen.ResultAsInteger())
-                    if attachedHorse == horse then
-                        PlayerWagonHorses[horse] = horseData
-                        attachedCount = attachedCount + 1
-                    end
-
-                    if not PlayerWagonHorses[horse] then
-                        print(('Nt_Stables: failed to attach %s to wagon %s slot %d.'):format(
-                            tostring(horseData.horse),
-                            tostring(wagonData.model),
-                            slot
-                        ))
-                        DeletePed(horse)
-                        if DoesEntityExist(horse) then DeleteEntity(horse) end
-                    end
-                end
+            local horse = Citizen.InvokeNative(0xA8BA0BAE0173457B, wagon, harnessIndex, Citizen.ResultAsInteger())
+            while (horse == 0 or not DoesEntityExist(horse)) and GetGameTimer() < timeout do
+                Wait(100)
+                horse = Citizen.InvokeNative(0xA8BA0BAE0173457B, wagon, harnessIndex, Citizen.ResultAsInteger())
             end
+
+            if horse ~= 0 and DoesEntityExist(horse) then
+                SetEntityAsMissionEntity(horse, true, true)
+                SetBlockingOfNonTemporaryEvents(horse, true)
+                SetPedPromptName(horse, horseData.name)
+                Citizen.InvokeNative(0x5653AB26C82938CF, horse, 41611, horseData.gender == 'male' and 0.0 or 1.0)
+                PlayerWagonHorses[horse] = horseData
+
+                if NtHorseAppearance.Apply(horse, horseData.appearance, false) then
+                    attachedCount = attachedCount + 1
+                else
+                    print(('Nt_Stables: missing or invalid cached appearance for %s in wagon %s slot %d.'):format(
+                        tostring(horseData.name),
+                        tostring(wagonData.model),
+                        slot
+                    ))
+                end
+                NtHorseAppearance.ApplyHarnessTint(
+                    horse,
+                    wagonData.harness_tint0,
+                    wagonData.harness_tint1,
+                    wagonData.harness_tint2
+                )
+                Citizen.InvokeNative(0x5DA12E025D47D4E5, horse, 16, tonumber(horseData.dirt) or 0)
+            else
+                print(('Nt_Stables: wagon %s did not create a horse in slot %d for %s.'):format(
+                    tostring(wagonData.model),
+                    slot,
+                    tostring(horseData.name)
+                ))
+            end
+        else
+            print(('Nt_Stables: no assigned horse found for wagon %s slot %d.'):format(
+                tostring(wagonData.model),
+                slot
+            ))
         end
     end
 
@@ -667,9 +629,9 @@ HitchWagonHorses = function(wagon, wagonData)
         wagonCoords.y,
         wagonCoords.z,
         wagonHeading,
-        false,
-        false,
         true,
+        true,
+        false,
         false
     )
     SetModelAsNoLongerNeeded(modelHash)
@@ -686,15 +648,13 @@ HitchWagonHorses = function(wagon, wagonData)
     activeWagonContext = { wagon = PlayerWagon, wagonId = wagonData.id, isSpawned = true, destroyed = false, broken = false }
     state.wagon[wagonData.id] = activeWagonContext
     SetEntityAsMissionEntity(PlayerWagon, true, true)
+    SetDraftVehicleAnimalsCanDetach(PlayerWagon, false)
+    SetDraftVehicleAllowDraftAnimalAutoCreation(PlayerWagon, true)
     Citizen.InvokeNative(0x7263332501E07F52, PlayerWagon, true)
+    SetNetworkIdExistsOnAllMachines(NetworkGetNetworkIdFromEntity(PlayerWagon), true)
     local attachedCount = SpawnWagonHorses(PlayerWagon, hitchWagonData)
     ApplyWagonCustomization(PlayerWagon, wagonData)
     SetVehicleDirtLevel(PlayerWagon, 0.0)
-
-    NetworkEntity(PlayerWagon)
-    for horse in pairs(PlayerWagonHorses) do
-        if DoesEntityExist(horse) then NetworkEntity(horse) end
-    end
 
     wagonBlip = Citizen.InvokeNative(0x23F74C2FDA6E7C61, -1230993421, PlayerWagon)
     SetBlipSprite(wagonBlip, joaat('blip_player_coach'), true)
@@ -722,6 +682,7 @@ local function CallPlayerWagon()
         return
     end
 
+    NtHorseAppearance.BackfillMissing()
     local wagonData = lib.callback.await('nt_stables:server:getActiveWagon', false)
     if not wagonData then
         lib.notify({ title = 'You do not have an active wagon.', type = 'error', duration = 10000 })
@@ -741,18 +702,26 @@ local function CallPlayerWagon()
         return
     end
 
-    local roadSpawn = FindStableRoadSpawn(
-        GetEntityCoords(cache.ped),
-        GetEntityHeading(cache.ped),
-        ConfigStables.Settings.WagonCallSpawnDistance
-    )
+    local roadSpawn
+    if ConfigStables.testSpawn then
+        roadSpawn = {
+            coords = GetOffsetFromEntityInWorldCoords(cache.ped, 0.0, 10.0, 0.0),
+            heading = GetEntityHeading(cache.ped),
+        }
+    else
+        roadSpawn = FindStableRoadSpawn(
+            GetEntityCoords(cache.ped),
+            GetEntityHeading(cache.ped),
+            ConfigStables.Settings.WagonCallSpawnDistance
+        )
+    end
     if not roadSpawn then
         SetModelAsNoLongerNeeded(modelHash)
         lib.notify({ title = 'No suitable road was found for your wagon.', type = 'error', duration = 10000 })
         return
     end
 
-    PlayerWagon = CreateVehicle(modelHash, roadSpawn.coords.x, roadSpawn.coords.y, roadSpawn.coords.z, roadSpawn.heading, false, false, true, false)
+    PlayerWagon = CreateVehicle(modelHash, roadSpawn.coords.x, roadSpawn.coords.y, roadSpawn.coords.z, roadSpawn.heading, true, true, false, false)
     SetModelAsNoLongerNeeded(modelHash)
 
     if PlayerWagon == 0 or not DoesEntityExist(PlayerWagon) then
@@ -765,7 +734,10 @@ local function CallPlayerWagon()
     activeWagonContext = { wagon = PlayerWagon, wagonId = wagonData.id, isSpawned = true, destroyed = false, broken = false }
     state.wagon[wagonData.id] = activeWagonContext
     SetEntityAsMissionEntity(PlayerWagon, true, true)
+    SetDraftVehicleAnimalsCanDetach(PlayerWagon, false)
+    SetDraftVehicleAllowDraftAnimalAutoCreation(PlayerWagon, true)
     Citizen.InvokeNative(0x7263332501E07F52, PlayerWagon, true)
+    SetNetworkIdExistsOnAllMachines(NetworkGetNetworkIdFromEntity(PlayerWagon), true)
     local attachedCount = SpawnWagonHorses(PlayerWagon, wagonData)
     if attachedCount ~= ConfigWagon.Wagons[wagonData.model].horseCount then
         lib.notify({
@@ -780,11 +752,6 @@ local function CallPlayerWagon()
     end
     ApplyWagonCustomization(PlayerWagon, wagonData)
     SetVehicleDirtLevel(PlayerWagon, 0.0)
-
-    NetworkEntity(PlayerWagon)
-    for horse in pairs(PlayerWagonHorses) do
-        if DoesEntityExist(horse) then NetworkEntity(horse) end
-    end
 
     wagonBlip = Citizen.InvokeNative(0x23F74C2FDA6E7C61, -1230993421, PlayerWagon)
     SetBlipSprite(wagonBlip, joaat('blip_player_coach'), true)

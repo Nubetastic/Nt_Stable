@@ -310,6 +310,10 @@ RegisterNUICallback('registerWildHorse', function(data, cb)
         return cb({ success = false })
     end
 
+    if not NtHorseAppearance.Save(result.horseId, horse) then
+        CreateThread(NtHorseAppearance.BackfillMissing)
+    end
+
     tamedHorse = 0
     CloseRegistration()
     DeleteRegisteredHorse(horse)

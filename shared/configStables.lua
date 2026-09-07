@@ -1,5 +1,7 @@
 ConfigStables = {}
 
+ConfigStables.testSpawn = true -- sets it to spawn 10 distance from player instead of on the road.
+
 ConfigStables.Blip = {
     blipName = "Stables",
     blipSprite = 'blip_shop_horse',

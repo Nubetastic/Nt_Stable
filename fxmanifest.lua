@@ -16,6 +16,7 @@ shared_scripts {
 
 client_scripts {
     'client/blips.lua',
+    'client/horseAppearance.lua',
     'client/stalls.lua',
     'client/findRoad.lua',
     'client/riding.lua',

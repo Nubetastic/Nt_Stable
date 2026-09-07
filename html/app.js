@@ -39,9 +39,10 @@ let componentPreviewTimer = 0;
 let wagonCatalog = [];
 let selectedWagonModel;
 let wagonCustomizationMode = 'buy';
-let wagonCustomizationValues = { livery: -1, tint: 0, extra: 0, extras: [], lantern: 0 };
-let wagonOriginalCustomization = { livery: -1, tint: 0, extras: [], lantern: 0 };
+let wagonCustomizationValues = { livery: -1, tint: 0, harnessTint0: 255, harnessTint1: 255, harnessTint2: 255, extra: 0, extras: [], lantern: 0 };
+let wagonOriginalCustomization = { livery: -1, tint: 0, harnessTint0: 255, harnessTint1: 255, harnessTint2: 255, extras: [], lantern: 0 };
 let wagonCustomizationPrices = { livery: 0, tint: 0, extras: 0, lanterns: 0 };
+let wagonHarnessTintTimer = 0;
 let ownedHorseCount = 0;
 let wagonHorseAssignment = { wagonId: 0, horseCount: 0, assignments: [], horses: [], selectedSlot: 0 };
 let stableInventory = { items: [], horse: null, wagon: null };
@@ -702,6 +703,13 @@ const updateWagonCustomizationControls = () => {
         document.getElementById(outputId).textContent = formatValue(values[selectedIndex], selectedIndex);
     });
 
+    [0, 1, 2].forEach((channel) => {
+        const input = document.getElementById(`wagon-harness-tint${channel}`);
+        const value = Number(wagonCustomizationValues[`harnessTint${channel}`]);
+        input.value = value;
+        document.getElementById(`wagon-harness-tint${channel}-value`).textContent = value === 255 ? 'Disabled' : `Color ${value}`;
+    });
+
     document.getElementById('wagon-lantern-option').hidden = wagon.lanterns.length <= 1;
 
     const selectedExtra = Number(wagonCustomizationValues.extra);
@@ -716,6 +724,9 @@ const updateWagonCustomizationControls = () => {
     let price = wagonCustomizationMode === 'buy' ? Number(wagon.price) : 0;
     if (wagonCustomizationValues.livery !== wagonOriginalCustomization.livery) price += Number(wagonCustomizationPrices.livery);
     if (wagonCustomizationValues.tint !== wagonOriginalCustomization.tint) price += Number(wagonCustomizationPrices.tint);
+    if (wagonCustomizationValues.harnessTint0 !== wagonOriginalCustomization.harnessTint0
+        || wagonCustomizationValues.harnessTint1 !== wagonOriginalCustomization.harnessTint1
+        || wagonCustomizationValues.harnessTint2 !== wagonOriginalCustomization.harnessTint2) price += Number(wagonCustomizationPrices.tint);
     price += wagonCustomizationValues.extras.filter((extra) => !wagonOriginalCustomization.extras.includes(extra)).length
         * Number(wagonCustomizationPrices.extras);
     if (wagonCustomizationValues.lantern !== wagonOriginalCustomization.lantern) price += Number(wagonCustomizationPrices.lanterns);
@@ -732,6 +743,9 @@ const renderWagonCustomization = (data) => {
     wagonCustomizationValues = {
         livery: Number(data.selected.livery),
         tint: Number(data.selected.tint),
+        harnessTint0: Number(data.selected.harnessTint0),
+        harnessTint1: Number(data.selected.harnessTint1),
+        harnessTint2: Number(data.selected.harnessTint2),
         extra: Number(data.selected.extra),
         extras: Array.isArray(data.selected.extras) ? data.selected.extras.map(Number) : [],
         lantern: data.selected.lantern,
@@ -739,11 +753,17 @@ const renderWagonCustomization = (data) => {
     wagonOriginalCustomization = wagonCustomizationMode === 'buy' ? {
         livery: wagonCatalog.find((wagon) => wagon.model === selectedWagonModel).livery[0],
         tint: wagonCatalog.find((wagon) => wagon.model === selectedWagonModel).tint[0],
+        harnessTint0: 255,
+        harnessTint1: 255,
+        harnessTint2: 255,
         extras: [],
         lantern: 0,
     } : {
         livery: wagonCustomizationValues.livery,
         tint: wagonCustomizationValues.tint,
+        harnessTint0: wagonCustomizationValues.harnessTint0,
+        harnessTint1: wagonCustomizationValues.harnessTint1,
+        harnessTint2: wagonCustomizationValues.harnessTint2,
         extras: [...wagonCustomizationValues.extras],
         lantern: wagonCustomizationValues.lantern,
     };
@@ -773,6 +793,9 @@ const selectWagonCatalogIndex = async (wagonIndex) => {
     wagonCustomizationValues = {
         livery: Number(result.livery),
         tint: Number(result.tint),
+        harnessTint0: Number(result.harnessTint0),
+        harnessTint1: Number(result.harnessTint1),
+        harnessTint2: Number(result.harnessTint2),
         extra: Number(result.extra),
         extras: [],
         lantern: result.lantern,
@@ -780,6 +803,9 @@ const selectWagonCatalogIndex = async (wagonIndex) => {
     wagonOriginalCustomization = {
         livery: wagonCustomizationValues.livery,
         tint: wagonCustomizationValues.tint,
+        harnessTint0: wagonCustomizationValues.harnessTint0,
+        harnessTint1: wagonCustomizationValues.harnessTint1,
+        harnessTint2: wagonCustomizationValues.harnessTint2,
         extras: [],
         lantern: 0,
     };
@@ -1478,6 +1504,15 @@ document.querySelectorAll('[data-wagon-action]').forEach((button) => {
         wagonCustomizationValues.lantern = wagon.lanterns[Number(document.getElementById('wagon-lantern').value)];
         updateWagonCustomizationControls();
         postNui('previewWagonCustomization', wagonCustomizationValues);
+    });
+});
+
+document.querySelectorAll('[data-wagon-harness-tint]').forEach((input) => {
+    input.addEventListener('input', () => {
+        wagonCustomizationValues[input.dataset.wagonHarnessTint] = Number(input.value);
+        updateWagonCustomizationControls();
+        clearTimeout(wagonHarnessTintTimer);
+        wagonHarnessTintTimer = setTimeout(() => postNui('previewWagonCustomization', wagonCustomizationValues), 75);
     });
 });
 

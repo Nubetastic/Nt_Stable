@@ -1,6 +1,5 @@
 local RSGCore = exports['rsg-core']:GetCoreObject()
 local HorseStats = lib.load('shared.horse_stats')
-local HorseComponents = lib.load('shared.horse_components')
 
 PlayerHorse = 0
 PlayerHorseData = nil
@@ -41,45 +40,6 @@ local statPoints = {
     [8] = 1400,
     [9] = 1700,
 }
-
-local function ApplyComponentTints(horse, componentCategory, tints)
-    if not tints then return end
-
-    local componentCount = Citizen.InvokeNative(0x90403E8107B60E81, horse, Citizen.ResultAsInteger())
-    local componentIndex
-    for index = 0, componentCount - 1 do
-        local categoryHash = Citizen.InvokeNative(0x9B90842304C938A7, horse, index, 0, Citizen.ResultAsInteger())
-        if categoryHash == componentCategory.categoryHash or categoryHash == componentCategory.categoryHash - 0x100000000 then
-            componentIndex = index
-            break
-        end
-    end
-    if not componentIndex then return end
-
-    Citizen.InvokeNative(0x4EFC1F8FF1AD94DE, horse, componentCategory.categoryHash, joaat(componentCategory.tintPalette), tints.tint0, tints.tint1, tints.tint2)
-    Citizen.InvokeNative(0xAAB86462966168CE, horse, true)
-    Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
-end
-
-local function ApplyHorseComponents(horse, storedComponents)
-    if type(storedComponents) ~= 'string' or storedComponents == '' then return end
-
-    local success, components = pcall(json.decode, storedComponents)
-    if not success or type(components) ~= 'table' then return end
-
-    for _, category in ipairs(ConfigStables.Customization) do
-        local value = tonumber(components[category.key]) or 0
-        local component = value > 0 and HorseComponents[category.key][value]
-        if component then
-            Citizen.InvokeNative(0xD3A7B003ED343FD9, horse, component.hash, true, true, false)
-        end
-    end
-
-    for _, category in ipairs(ConfigStables.Customization) do
-        ApplyComponentTints(horse, category, components[category.tintKey])
-    end
-    Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
-end
 
 function ShowOwnedHorseInfo(horseData, returnToManager)
     local base, finalStats, level = HorseStats.Calculate(horseData)
@@ -353,6 +313,7 @@ local function CallPlayerHorse()
         DeletePlayerHorse()
     end
 
+    NtHorseAppearance.BackfillMissing()
     local data = lib.callback.await('nt_stables:server:getActiveHorse', false)
     if not data then
         lib.notify({ title = 'You do not have an active horse.', type = 'error', duration = 10000 })
@@ -433,12 +394,18 @@ local function CallPlayerHorse()
     Citizen.InvokeNative(0xAEB97D84CDF3C00B, PlayerHorse, false)
     Citizen.InvokeNative(0x024EC9B649111915, PlayerHorse, true)
     Citizen.InvokeNative(0xCC97B29285B1DC3B, PlayerHorse, 1)
-    Citizen.InvokeNative(0x5DA12E025D47D4E5, PlayerHorse, 16, tonumber(data.dirt) or 0)
-
     local faceFeature = data.gender == 'male' and 0.0 or 1.0
     Citizen.InvokeNative(0x5653AB26C82938CF, PlayerHorse, 41611, faceFeature)
-    ApplyHorseComponents(PlayerHorse, data.components)
-    Citizen.InvokeNative(0xCC8CA3E88256E58F, PlayerHorse, false, true, true, true, false)
+    if not NtHorseAppearance.Apply(PlayerHorse, data.appearance) then
+        SetEntityAsMissionEntity(PlayerHorse, true, true)
+        DeletePed(PlayerHorse)
+        if DoesEntityExist(PlayerHorse) then DeleteEntity(PlayerHorse) end
+        PlayerHorse = 0
+        PlayerHorseData = nil
+        lib.notify({ title = 'The saved horse appearance could not be applied.', type = 'error', duration = 10000 })
+        return
+    end
+    Citizen.InvokeNative(0x5DA12E025D47D4E5, PlayerHorse, 16, tonumber(data.dirt) or 0)
 
     Citizen.InvokeNative(0xA3DB37EDF9A74635, PlayerId(), PlayerHorse, 28, 1, true)
     Citizen.InvokeNative(0xA3DB37EDF9A74635, PlayerId(), PlayerHorse, 35, 1, true)

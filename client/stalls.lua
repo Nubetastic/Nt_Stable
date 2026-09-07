@@ -112,6 +112,7 @@ local function SpawnStableHorses(stableName)
 
                 stallHorses[stableName][stallNumber] = {
                     entity = horse,
+                    model = horseModel,
                     target = targetName,
                 }
             end
@@ -159,6 +160,15 @@ RegisterNUICallback('buyHorse', function(data, cb)
         lib.notify({ title = result and result.message or 'Unable to buy this horse.', type = 'error', duration = 10000 })
         return cb({ success = false })
     end
+
+    local appearanceSaved = false
+    for _, stallHorse in pairs(stallHorses[stableName] or {}) do
+        if stallHorse.model == model and DoesEntityExist(stallHorse.entity) then
+            appearanceSaved = NtHorseAppearance.Save(result.horseId, stallHorse.entity)
+            break
+        end
+    end
+    if not appearanceSaved then CreateThread(NtHorseAppearance.BackfillMissing) end
 
     TriggerEvent('nt_stables:client:ridingHorseChanged')
     CloseHorseInfo()

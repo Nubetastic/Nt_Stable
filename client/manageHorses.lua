@@ -7,7 +7,6 @@ local stableManagerData
 local previewHorse = 0
 local previewWagon = 0
 local previewWagonHorses = {}
-local previewWagonHorsesReady = false
 local customizeCamera
 local customizeStable
 local cameraAngle = 0.0
@@ -161,7 +160,6 @@ local function DeletePreviewWagon()
 
     previewWagon = 0
     previewWagonHorses = {}
-    previewWagonHorsesReady = false
 end
 
 local function DeletePreviewHorse()
@@ -174,7 +172,7 @@ local function DeletePreviewHorse()
     previewHorse = 0
 end
 
-local function ApplyWagonPreviewCustomization(wagon, selectedCustomization)
+local function ApplyWagonPreviewCustomization(wagon, selectedCustomization, spawnDraftHorses)
     if wagon == 0 or not DoesEntityExist(wagon) then return end
 
     Citizen.InvokeNative(0x8268B098F6FCA4E2, wagon, selectedCustomization.tint)
@@ -214,15 +212,13 @@ local function ApplyWagonPreviewCustomization(wagon, selectedCustomization)
         AddLightPropSetToVehicle(wagon, joaat(selectedCustomization.lantern))
     end
 
-    SpawnPreviewWagonHorses(wagon, selectedCustomization)
-    SetTimeout(250, function()
-        if wagon == previewWagon and DoesEntityExist(wagon) then
-            SpawnPreviewWagonHorses(wagon, selectedCustomization)
-        end
-    end)
+    if spawnDraftHorses then
+        SpawnPreviewWagonHorses(wagon, selectedCustomization)
+    end
 end
 
-local function SpawnPreviewWagon(wagon)
+local function SpawnPreviewWagon(wagon, spawnDraftHorses)
+    spawnDraftHorses = spawnDraftHorses ~= false
     DeletePreviewHorse()
     DeletePreviewWagon()
     previewIsWagon = true
@@ -250,10 +246,22 @@ local function SpawnPreviewWagon(wagon)
     end
 
     SetEntityAsMissionEntity(previewWagon, true, true)
-    Citizen.InvokeNative(0x7263332501E07F52, previewWagon, true)
+    SetDraftVehicleAllowDraftAnimalAutoCreation(previewWagon, spawnDraftHorses)
+    if spawnDraftHorses then
+        SetDraftVehicleAnimalsCanDetach(previewWagon, false)
+        Citizen.InvokeNative(0x7263332501E07F52, previewWagon, true)
+    end
     SetEntityInvincible(previewWagon, true)
     FreezeEntityPosition(previewWagon, true)
-    ApplyWagonPreviewCustomization(previewWagon, wagon)
+    ApplyWagonPreviewCustomization(previewWagon, wagon, spawnDraftHorses)
+    if spawnDraftHorses then
+        local spawnedWagon = previewWagon
+        SetTimeout(250, function()
+            if previewWagon == spawnedWagon and DoesEntityExist(spawnedWagon) then
+                SpawnPreviewWagonHorses(spawnedWagon, wagon)
+            end
+        end)
+    end
 
     if wagon.needs_repair == 1 or wagon.needs_repair == true then
         local damagedPreview = previewWagon
@@ -344,30 +352,6 @@ local function ApplyHorseComponents(horse, components)
     end
 end
 
-local function ApplyWagonHorseComponents(horse, horseData)
-    local components = GetHorseComponents(horseData)
-
-    for _, category in ipairs(ConfigStables.Customization) do
-        if ConfigStables.RidingHorseComponents[category.key] then
-            Citizen.InvokeNative(0xD710A5007C2AC539, horse, category.categoryHash, 0)
-        else
-            local value = tonumber(components[category.key]) or 0
-            if value > 0 and HorseComponents[category.key][value] then
-                Citizen.InvokeNative(0xD3A7B003ED343FD9, horse, HorseComponents[category.key][value].hash, true, true, false)
-            end
-        end
-    end
-
-    Citizen.InvokeNative(0x1902C4CFCC5BE57C, horse, ConfigStables.WagonHorse.HarnessOutfit)
-    Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
-
-    for _, category in ipairs(ConfigStables.Customization) do
-        if not ConfigStables.RidingHorseComponents[category.key] then
-            ApplyComponentTints(horse, category, components[category.tintKey])
-        end
-    end
-end
-
 SpawnPreviewWagonHorses = function(wagonEntity, wagon)
     local wagonConfig = ConfigWagon.Wagons[wagon.model]
     if not wagonConfig then return end
@@ -375,12 +359,10 @@ SpawnPreviewWagonHorses = function(wagonEntity, wagon)
     for slot = 1, wagonConfig.horseCount do
         local harnessIndex = slot - 1
         local attachedHorse = Citizen.InvokeNative(0xA8BA0BAE0173457B, wagonEntity, harnessIndex, Citizen.ResultAsInteger())
-        if not previewWagonHorsesReady then
-            local timeout = GetGameTimer() + 3000
-            while (attachedHorse == 0 or not DoesEntityExist(attachedHorse)) and GetGameTimer() < timeout do
-                Wait(50)
-                attachedHorse = Citizen.InvokeNative(0xA8BA0BAE0173457B, wagonEntity, harnessIndex, Citizen.ResultAsInteger())
-            end
+        local timeout = GetGameTimer() + 3000
+        while (attachedHorse == 0 or not DoesEntityExist(attachedHorse)) and GetGameTimer() < timeout do
+            Wait(50)
+            attachedHorse = Citizen.InvokeNative(0xA8BA0BAE0173457B, wagonEntity, harnessIndex, Citizen.ResultAsInteger())
         end
 
         local horseData
@@ -391,51 +373,44 @@ SpawnPreviewWagonHorses = function(wagonEntity, wagon)
             end
         end
 
-        if not (horseData and attachedHorse ~= 0 and previewWagonHorses[attachedHorse]) then
-            local horseCoords
-            local horseHeading
-            if attachedHorse ~= 0 and DoesEntityExist(attachedHorse) then
-                horseCoords = GetEntityCoords(attachedHorse)
-                horseHeading = GetEntityHeading(attachedHorse)
-                Citizen.InvokeNative(0x4402960666000E62, wagonEntity, harnessIndex)
-                previewWagonHorses[attachedHorse] = nil
-                SetEntityAsMissionEntity(attachedHorse, true, true)
-                DeletePed(attachedHorse)
-                if DoesEntityExist(attachedHorse) then DeleteEntity(attachedHorse) end
-            end
+        if attachedHorse ~= 0 and DoesEntityExist(attachedHorse) then
+            previewWagonHorses[attachedHorse] = previewWagonHorses[attachedHorse] or 0
+            SetEntityAsMissionEntity(attachedHorse, true, true)
+            SetBlockingOfNonTemporaryEvents(attachedHorse, true)
 
-            if horseData and horseCoords then
-                local horseHash = joaat(horseData.horse)
-                local timeout = GetGameTimer() + 10000
-                RequestModel(horseHash, false)
-                while not HasModelLoaded(horseHash) and GetGameTimer() < timeout do Wait(0) end
-
-                if HasModelLoaded(horseHash) then
-                    local horse = CreatePed(horseHash, horseCoords.x, horseCoords.y, horseCoords.z, horseHeading, false, true, true, true)
-                    SetModelAsNoLongerNeeded(horseHash)
-                    if horse ~= 0 and DoesEntityExist(horse) then
-                        previewWagonHorses[horse] = true
-                        SetEntityAsMissionEntity(horse, true, true)
-                        SetRandomOutfitVariation(horse, true)
-                        SetBlockingOfNonTemporaryEvents(horse, true)
-                        SetPedPromptName(horse, horseData.name)
-                        Citizen.InvokeNative(0x5653AB26C82938CF, horse, 41611, horseData.gender == 'male' and 0.0 or 1.0)
-                        Citizen.InvokeNative(0x5DA12E025D47D4E5, horse, 16, tonumber(horseData.dirt) or 0)
-                        ApplyWagonHorseComponents(horse, horseData)
-                        SetEntityVisible(horse, true)
-                        ResetEntityAlpha(horse)
-                        Citizen.InvokeNative(0x316CDB5B6E8F4110, horse, wagonEntity, harnessIndex)
-                    end
+            if not horseData then
+                SetEntityAlpha(attachedHorse, 0, false)
+                previewWagonHorses[attachedHorse] = 0
+            elseif tonumber(previewWagonHorses[attachedHorse]) ~= tonumber(horseData.id) then
+                Citizen.InvokeNative(0x5653AB26C82938CF, attachedHorse, 41611, horseData.gender == 'male' and 0.0 or 1.0)
+                if NtHorseAppearance.Apply(attachedHorse, horseData.appearance, false, 100) then
+                    SetPedPromptName(attachedHorse, horseData.name)
+                    Citizen.InvokeNative(0x5DA12E025D47D4E5, attachedHorse, 16, tonumber(horseData.dirt) or 0)
+                    SetEntityVisible(attachedHorse, true)
+                    ResetEntityAlpha(attachedHorse)
+                    previewWagonHorses[attachedHorse] = horseData.id
+                else
+                    SetEntityAlpha(attachedHorse, 0, false)
+                    previewWagonHorses[attachedHorse] = 0
                 end
+            else
+                SetEntityVisible(attachedHorse, true)
+                ResetEntityAlpha(attachedHorse)
             end
+            NtHorseAppearance.ApplyHarnessTint(
+                attachedHorse,
+                wagon.harness_tint0,
+                wagon.harness_tint1,
+                wagon.harness_tint2,
+                100
+            )
         end
     end
-    previewWagonHorsesReady = true
 end
 
 local function OpenWagonHorseAssignment(wagon)
     assignmentWagonId = wagon.id
-    SpawnPreviewWagon(wagon)
+    SpawnPreviewWagon(wagon, true)
     SetNuiFocus(true, true)
     SendNUIMessage({
         action = 'openWagonHorseAssignment',
@@ -481,7 +456,10 @@ local function SpawnPreviewHorse(horse)
         Wait(0)
         WaitForHorseRender(previewHorse)
         Citizen.InvokeNative(0x5653AB26C82938CF, previewHorse, 41611, horse.gender == 'male' and 0.0 or 1.0)
-        ApplyHorseComponents(previewHorse, GetHorseComponents(horse))
+        if not NtHorseAppearance.Apply(previewHorse, horse.appearance, true, 100) then
+            ApplyHorseComponents(previewHorse, GetHorseComponents(horse))
+        end
+        Citizen.InvokeNative(0x5DA12E025D47D4E5, previewHorse, 16, tonumber(horse.dirt) or 0)
     end
 end
 
@@ -610,6 +588,9 @@ local function OpenWagonCustomization(wagon)
         name = wagon and wagon.name or wagonConfig.label,
         livery = wagon and tonumber(wagon.livery) or wagonConfig.customizations.livery[1],
         tint = wagon and tonumber(wagon.tint) or wagonConfig.customizations.tint[1],
+        harness_tint0 = wagon and tonumber(wagon.harness_tint0) or 255,
+        harness_tint1 = wagon and tonumber(wagon.harness_tint1) or 255,
+        harness_tint2 = wagon and tonumber(wagon.harness_tint2) or 255,
         extra = wagon and tonumber(wagon.extra) or wagonConfig.customizations.extras[1],
         extras = enabledExtras,
         lantern = wagon and wagon.lantern ~= '0' and wagon.lantern or 0,
@@ -628,7 +609,7 @@ local function OpenWagonCustomization(wagon)
         wagonCustomization.lantern = 0
     end
 
-    SpawnPreviewWagon(wagonCustomization)
+    SpawnPreviewWagon(wagonCustomization, wagonCustomization.mode ~= 'buy')
     SetNuiFocus(true, true)
     SendNUIMessage({
         action = 'openWagonCustomization',
@@ -639,6 +620,9 @@ local function OpenWagonCustomization(wagon)
             name = wagonCustomization.name,
             livery = wagonCustomization.livery,
             tint = wagonCustomization.tint,
+            harnessTint0 = wagonCustomization.harness_tint0,
+            harnessTint1 = wagonCustomization.harness_tint1,
+            harnessTint2 = wagonCustomization.harness_tint2,
             extra = wagonCustomization.extra,
             extras = wagonCustomization.extras,
             lantern = wagonCustomization.lantern,
@@ -673,6 +657,7 @@ function CloseHorseManager()
 end
 
 function OpenHorseManager(stableName)
+    NtHorseAppearance.BackfillMissing()
     local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
     if not managerData then return end
 
@@ -869,7 +854,11 @@ RegisterNUICallback('setWagonHorse', function(data, cb)
     managedWagons = managerData.wagons
     stableManagerData = managerData
     local wagon = GetManagedWagon(wagonId)
-    if wagon then SpawnPreviewWagon(wagon) end
+    if wagon and previewWagon ~= 0 and DoesEntityExist(previewWagon) then
+        SpawnPreviewWagonHorses(previewWagon, wagon)
+    elseif wagon then
+        SpawnPreviewWagon(wagon, true)
+    end
 
     if result.wasRiding then
         TriggerEvent('nt_stables:client:ridingHorseChanged')
@@ -911,15 +900,21 @@ RegisterNUICallback('selectWagonModel', function(data, cb)
     wagonCustomization.model = model
     wagonCustomization.livery = wagonConfig.customizations.livery[1]
     wagonCustomization.tint = wagonConfig.customizations.tint[1]
+    wagonCustomization.harness_tint0 = 255
+    wagonCustomization.harness_tint1 = 255
+    wagonCustomization.harness_tint2 = 255
     wagonCustomization.extra = wagonConfig.customizations.extras[1]
     wagonCustomization.extras = {}
     wagonCustomization.lantern = 0
-    SpawnPreviewWagon(wagonCustomization)
+    SpawnPreviewWagon(wagonCustomization, false)
 
     cb({
         success = true,
         livery = wagonCustomization.livery,
         tint = wagonCustomization.tint,
+        harnessTint0 = wagonCustomization.harness_tint0,
+        harnessTint1 = wagonCustomization.harness_tint1,
+        harnessTint2 = wagonCustomization.harness_tint2,
         extra = wagonCustomization.extra,
         extras = wagonCustomization.extras,
         lantern = wagonCustomization.lantern,
@@ -932,10 +927,17 @@ RegisterNUICallback('previewWagonCustomization', function(data, cb)
     local wagonConfig = ConfigWagon.Wagons[wagonCustomization.model]
     local livery = tonumber(data.livery)
     local tint = tonumber(data.tint)
+    local harnessTint0 = tonumber(data.harnessTint0)
+    local harnessTint1 = tonumber(data.harnessTint1)
+    local harnessTint2 = tonumber(data.harnessTint2)
     local extra = tonumber(data.extra)
     local extras = data.extras
     local lantern = data.lantern == 0 and 0 or tostring(data.lantern or '')
-    if not wagonConfig or not IsWagonOption(wagonConfig.customizations.livery, livery)
+    if not wagonConfig or not harnessTint0 or not harnessTint1 or not harnessTint2
+        or harnessTint0 % 1 ~= 0 or harnessTint0 < 0 or harnessTint0 > 255
+        or harnessTint1 % 1 ~= 0 or harnessTint1 < 0 or harnessTint1 > 255
+        or harnessTint2 % 1 ~= 0 or harnessTint2 < 0 or harnessTint2 > 255
+        or not IsWagonOption(wagonConfig.customizations.livery, livery)
         or not IsWagonOption(wagonConfig.customizations.tint, tint)
         or not IsWagonOption(wagonConfig.customizations.extras, extra)
         or type(extras) ~= 'table'
@@ -951,13 +953,16 @@ RegisterNUICallback('previewWagonCustomization', function(data, cb)
     local resetLivery = livery == -1 and wagonCustomization.livery ~= -1
     wagonCustomization.livery = livery
     wagonCustomization.tint = tint
+    wagonCustomization.harness_tint0 = harnessTint0
+    wagonCustomization.harness_tint1 = harnessTint1
+    wagonCustomization.harness_tint2 = harnessTint2
     wagonCustomization.extra = extra
     wagonCustomization.extras = extras
     wagonCustomization.lantern = lantern
     if resetLivery then
-        SpawnPreviewWagon(wagonCustomization)
+        SpawnPreviewWagon(wagonCustomization, wagonCustomization.mode ~= 'buy')
     else
-        ApplyWagonPreviewCustomization(previewWagon, wagonCustomization)
+        ApplyWagonPreviewCustomization(previewWagon, wagonCustomization, wagonCustomization.mode ~= 'buy')
     end
     cb({ success = true })
 end)
@@ -974,6 +979,9 @@ RegisterNUICallback('saveWagonCustomization', function(data, cb)
             data.name,
             wagonCustomization.livery,
             wagonCustomization.tint,
+            wagonCustomization.harness_tint0,
+            wagonCustomization.harness_tint1,
+            wagonCustomization.harness_tint2,
             wagonCustomization.extras,
             wagonCustomization.lantern
         )
@@ -984,6 +992,9 @@ RegisterNUICallback('saveWagonCustomization', function(data, cb)
             wagonCustomization.wagon.id,
             wagonCustomization.livery,
             wagonCustomization.tint,
+            wagonCustomization.harness_tint0,
+            wagonCustomization.harness_tint1,
+            wagonCustomization.harness_tint2,
             wagonCustomization.extras,
             wagonCustomization.lantern
         )
@@ -1109,9 +1120,16 @@ RegisterNUICallback('saveHorseCustomization', function(_, cb)
     if not customization then return cb({ success = false }) end
 
     local horse = customization.horse
-    local result = lib.callback.await('nt_stables:server:saveHorseComponents', false, horse.id, customization.components)
+    local appearance = NtHorseAppearance.Capture(previewHorse)
+    if not appearance then
+        lib.notify({ title = 'The horse appearance could not be captured.', type = 'error', duration = 10000 })
+        return cb({ success = false })
+    end
+
+    local result = lib.callback.await('nt_stables:server:saveHorseComponents', false, horse.id, customization.components, appearance)
     if result and result.success then
         horse.components = json.encode(customization.components)
+        horse.appearance = json.encode(appearance)
         if horse.active == 1 or horse.active == true then TriggerEvent('nt_stables:client:ridingHorseChanged') end
         customization = nil
         SendNUIMessage({ action = 'closeHorseCustomization' })
@@ -1373,6 +1391,7 @@ RegisterNUICallback('receiveAuctionHorse', function(data, cb)
         local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
         managedHorses, managedWagons, stableManagerData = managerData.horses, managerData.wagons, managerData
         auctionHeld = lib.callback.await('nt_stables:server:getHeldHorses', false)
+        CreateThread(NtHorseAppearance.BackfillMissing)
     end
     lib.notify({ title = result and result.success and 'Horse added to your stable.' or (result and result.message or 'The horse could not be received.'), type = result and result.success and 'success' or 'error', duration = 10000 })
     cb(result and result.success and { success = true, held = auctionHeld, horses = BuildAuctionOwnedHorses() } or (result or { success = false }))
