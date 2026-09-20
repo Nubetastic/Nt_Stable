@@ -5,9 +5,7 @@ local SET_PED_SCALE_NATIVE = 0x25ACFC650B65C538
 local HORSE_MODEL_NATIVE = 0x772A1969F649E902
 local SADDLE_NATIVE = 0xFB4891BD7578CDC1
 local IS_PED_MALE_NATIVE = 0x6D9F5FAA7488BA46
-local INPUT_CONTEXT = 0xCEFD9220
 local ATTRIBUTE_INDEX = { health = 0, stamina = 1, agility = 4, speed = 5, acceleration = 6 }
-local ATTRIBUTE_STATS = { 'health', 'stamina', 'agility', 'speed', 'acceleration' }
 
 local modelNames = {}
 for model in pairs(HorseStats.GetAll()) do
@@ -20,7 +18,8 @@ local tamedHorse = 0
 local registrationHorse = 0
 local registrationStable
 local registrationOpen = false
-local registrationPromptOpen = false
+local notifiedStable
+local openedStable
 local cachedPlayerHeight
 local tamingHeightApplied = false
 local heightRestorePending = false
@@ -113,29 +112,6 @@ local function GetNativeRanks(horse)
     return ranks
 end
 
-local function GetStartingStats(model, nativeRanks)
-    local stats = HorseStats.Get(model)
-    local differences = {}
-    local modifiers = {}
-
-    for _, stat in ipairs(ATTRIBUTE_STATS) do
-        local rank = math.floor((tonumber(nativeRanks[stat]) or stats[stat]) + 0.5)
-        rank = math.max(HorseStats.MinimumRank[stat], math.min(HorseStats.MaximumStartingRank, rank))
-        differences[#differences + 1] = { stat = stat, modifier = rank - stats[stat] }
-    end
-
-    table.sort(differences, function(left, right)
-        return math.abs(left.modifier) > math.abs(right.modifier)
-    end)
-
-    for index = 1, 3 do
-        stats[differences[index].stat] = stats[differences[index].stat] + differences[index].modifier
-        modifiers[differences[index].stat] = differences[index].modifier
-    end
-
-    return stats, modifiers
-end
-
 local function GetHorseGender(horse)
     local isMale = Citizen.InvokeNative(IS_PED_MALE_NATIVE, horse, Citizen.ResultAsInteger()) ~= 0
     return isMale and 'male' or 'female'
@@ -145,6 +121,7 @@ local function CloseRegistration()
     registrationOpen = false
     registrationHorse = 0
     registrationStable = nil
+    FreezeEntityPosition(cache.ped, false)
     SetNuiFocus(false, false)
     SendNUIMessage({ action = 'closeWildHorseRegistration' })
 end
@@ -174,28 +151,18 @@ local function OpenRegistration(stableName, horse)
     end
 
     local model = modelNames[GetEntityModel(horse)]
-    local nativeRanks = GetNativeRanks(horse)
-    local stats, modifiers = GetStartingStats(model, nativeRanks)
+    local horseData = HorseStats.Get(model)
 
     registrationHorse = horse
     registrationStable = stableName
     registrationOpen = true
+    FreezeEntityPosition(cache.ped, true)
     SetNuiFocus(true, true)
     SendNUIMessage({
         action = 'openWildHorseRegistration',
         horse = {
-            breed = stats.breed,
+            breed = horseData.breed,
             gender = GetHorseGender(horse),
-            health = stats.health,
-            stamina = stats.stamina,
-            agility = stats.agility,
-            speed = stats.speed,
-            acceleration = stats.acceleration,
-            strength = stats.strength,
-            carryWeight = HorseStats.GetCarryWeight(stats.strength),
-            pullWeight = HorseStats.GetPullWeight(stats.strength),
-            wild = true,
-            wildModifiers = modifiers,
         },
         quote = quote,
     })
@@ -242,35 +209,46 @@ end)
 CreateThread(function()
     while true do
         local wait = 500
-        local horse = not registrationOpen and GetRegisterableHorse() or 0
+        local horse = GetRegisterableHorse()
         local nearbyStable
+        local nearbyDistance
 
         if horse ~= 0 then
             local playerCoords = GetEntityCoords(cache.ped)
             for stableName, stable in pairs(ConfigStables.Locations) do
-                if #(playerCoords - stable.npcCoords) <= ConfigStables.WildHorseRegistration.StableDistance then
-                    nearbyStable = stableName
-                    break
+                if stable.RegisterCoords then
+                    local distance = #(playerCoords - stable.RegisterCoords)
+                    if distance <= ConfigStables.WildHorseRegistration.NotifyDistance then
+                        nearbyDistance = distance
+                        nearbyStable = stableName
+                        break
+                    end
                 end
             end
         end
 
         if nearbyStable then
             wait = 0
-            if not registrationPromptOpen then
-                lib.showTextUI('[E] Register Wild Horse')
-                registrationPromptOpen = true
+            if notifiedStable ~= nearbyStable then
+                notifiedStable = nearbyStable
+                lib.notify({
+                    title = 'Wild Horse Registration',
+                    description = 'Enter the stables to register your wild horse.',
+                    type = 'inform',
+                    duration = 10000,
+                })
             end
 
-            if IsControlJustReleased(0, INPUT_CONTEXT) then
-                lib.hideTextUI()
-                registrationPromptOpen = false
+            if nearbyDistance < ConfigStables.WildHorseRegistration.OpenDistance and openedStable ~= nearbyStable and not registrationOpen then
+                openedStable = nearbyStable
                 OpenRegistration(nearbyStable, horse)
                 Wait(500)
+            elseif nearbyDistance >= ConfigStables.WildHorseRegistration.OpenDistance then
+                openedStable = nil
             end
-        elseif registrationPromptOpen then
-            lib.hideTextUI()
-            registrationPromptOpen = false
+        else
+            notifiedStable = nil
+            openedStable = nil
         end
 
         Wait(wait)
@@ -324,7 +302,6 @@ end)
 AddEventHandler('onResourceStop', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then return end
 
-    if registrationPromptOpen then lib.hideTextUI() end
     if registrationOpen then CloseRegistration() end
     RestorePlayerHeight(true)
 end)

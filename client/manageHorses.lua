@@ -254,6 +254,7 @@ local function SpawnPreviewWagon(wagon, spawnDraftHorses)
     SetEntityInvincible(previewWagon, true)
     FreezeEntityPosition(previewWagon, true)
     ApplyWagonPreviewCustomization(previewWagon, wagon, spawnDraftHorses)
+    SetVehicleDirtLevel(previewWagon, 0.0)
     if spawnDraftHorses then
         local spawnedWagon = previewWagon
         SetTimeout(250, function()
@@ -385,7 +386,7 @@ SpawnPreviewWagonHorses = function(wagonEntity, wagon)
                 Citizen.InvokeNative(0x5653AB26C82938CF, attachedHorse, 41611, horseData.gender == 'male' and 0.0 or 1.0)
                 if NtHorseAppearance.Apply(attachedHorse, horseData.appearance, false, 100) then
                     SetPedPromptName(attachedHorse, horseData.name)
-                    Citizen.InvokeNative(0x5DA12E025D47D4E5, attachedHorse, 16, tonumber(horseData.dirt) or 0)
+                    Citizen.InvokeNative(0x5DA12E025D47D4E5, attachedHorse, 16, 0)
                     SetEntityVisible(attachedHorse, true)
                     ResetEntityAlpha(attachedHorse)
                     previewWagonHorses[attachedHorse] = horseData.id
@@ -397,13 +398,6 @@ SpawnPreviewWagonHorses = function(wagonEntity, wagon)
                 SetEntityVisible(attachedHorse, true)
                 ResetEntityAlpha(attachedHorse)
             end
-            NtHorseAppearance.ApplyHarnessTint(
-                attachedHorse,
-                wagon.harness_tint0,
-                wagon.harness_tint1,
-                wagon.harness_tint2,
-                100
-            )
         end
     end
 end
@@ -459,7 +453,7 @@ local function SpawnPreviewHorse(horse)
         if not NtHorseAppearance.Apply(previewHorse, horse.appearance, true, 100) then
             ApplyHorseComponents(previewHorse, GetHorseComponents(horse))
         end
-        Citizen.InvokeNative(0x5DA12E025D47D4E5, previewHorse, 16, tonumber(horse.dirt) or 0)
+        Citizen.InvokeNative(0x5DA12E025D47D4E5, previewHorse, 16, 0)
     end
 end
 
@@ -588,9 +582,6 @@ local function OpenWagonCustomization(wagon)
         name = wagon and wagon.name or wagonConfig.label,
         livery = wagon and tonumber(wagon.livery) or wagonConfig.customizations.livery[1],
         tint = wagon and tonumber(wagon.tint) or wagonConfig.customizations.tint[1],
-        harness_tint0 = wagon and tonumber(wagon.harness_tint0) or 255,
-        harness_tint1 = wagon and tonumber(wagon.harness_tint1) or 255,
-        harness_tint2 = wagon and tonumber(wagon.harness_tint2) or 255,
         extra = wagon and tonumber(wagon.extra) or wagonConfig.customizations.extras[1],
         extras = enabledExtras,
         lantern = wagon and wagon.lantern ~= '0' and wagon.lantern or 0,
@@ -620,9 +611,6 @@ local function OpenWagonCustomization(wagon)
             name = wagonCustomization.name,
             livery = wagonCustomization.livery,
             tint = wagonCustomization.tint,
-            harnessTint0 = wagonCustomization.harness_tint0,
-            harnessTint1 = wagonCustomization.harness_tint1,
-            harnessTint2 = wagonCustomization.harness_tint2,
             extra = wagonCustomization.extra,
             extras = wagonCustomization.extras,
             lantern = wagonCustomization.lantern,
@@ -900,9 +888,6 @@ RegisterNUICallback('selectWagonModel', function(data, cb)
     wagonCustomization.model = model
     wagonCustomization.livery = wagonConfig.customizations.livery[1]
     wagonCustomization.tint = wagonConfig.customizations.tint[1]
-    wagonCustomization.harness_tint0 = 255
-    wagonCustomization.harness_tint1 = 255
-    wagonCustomization.harness_tint2 = 255
     wagonCustomization.extra = wagonConfig.customizations.extras[1]
     wagonCustomization.extras = {}
     wagonCustomization.lantern = 0
@@ -912,9 +897,6 @@ RegisterNUICallback('selectWagonModel', function(data, cb)
         success = true,
         livery = wagonCustomization.livery,
         tint = wagonCustomization.tint,
-        harnessTint0 = wagonCustomization.harness_tint0,
-        harnessTint1 = wagonCustomization.harness_tint1,
-        harnessTint2 = wagonCustomization.harness_tint2,
         extra = wagonCustomization.extra,
         extras = wagonCustomization.extras,
         lantern = wagonCustomization.lantern,
@@ -927,17 +909,10 @@ RegisterNUICallback('previewWagonCustomization', function(data, cb)
     local wagonConfig = ConfigWagon.Wagons[wagonCustomization.model]
     local livery = tonumber(data.livery)
     local tint = tonumber(data.tint)
-    local harnessTint0 = tonumber(data.harnessTint0)
-    local harnessTint1 = tonumber(data.harnessTint1)
-    local harnessTint2 = tonumber(data.harnessTint2)
     local extra = tonumber(data.extra)
     local extras = data.extras
     local lantern = data.lantern == 0 and 0 or tostring(data.lantern or '')
-    if not wagonConfig or not harnessTint0 or not harnessTint1 or not harnessTint2
-        or harnessTint0 % 1 ~= 0 or harnessTint0 < 0 or harnessTint0 > 255
-        or harnessTint1 % 1 ~= 0 or harnessTint1 < 0 or harnessTint1 > 255
-        or harnessTint2 % 1 ~= 0 or harnessTint2 < 0 or harnessTint2 > 255
-        or not IsWagonOption(wagonConfig.customizations.livery, livery)
+    if not wagonConfig or not IsWagonOption(wagonConfig.customizations.livery, livery)
         or not IsWagonOption(wagonConfig.customizations.tint, tint)
         or not IsWagonOption(wagonConfig.customizations.extras, extra)
         or type(extras) ~= 'table'
@@ -953,9 +928,6 @@ RegisterNUICallback('previewWagonCustomization', function(data, cb)
     local resetLivery = livery == -1 and wagonCustomization.livery ~= -1
     wagonCustomization.livery = livery
     wagonCustomization.tint = tint
-    wagonCustomization.harness_tint0 = harnessTint0
-    wagonCustomization.harness_tint1 = harnessTint1
-    wagonCustomization.harness_tint2 = harnessTint2
     wagonCustomization.extra = extra
     wagonCustomization.extras = extras
     wagonCustomization.lantern = lantern
@@ -979,9 +951,6 @@ RegisterNUICallback('saveWagonCustomization', function(data, cb)
             data.name,
             wagonCustomization.livery,
             wagonCustomization.tint,
-            wagonCustomization.harness_tint0,
-            wagonCustomization.harness_tint1,
-            wagonCustomization.harness_tint2,
             wagonCustomization.extras,
             wagonCustomization.lantern
         )
@@ -992,9 +961,6 @@ RegisterNUICallback('saveWagonCustomization', function(data, cb)
             wagonCustomization.wagon.id,
             wagonCustomization.livery,
             wagonCustomization.tint,
-            wagonCustomization.harness_tint0,
-            wagonCustomization.harness_tint1,
-            wagonCustomization.harness_tint2,
             wagonCustomization.extras,
             wagonCustomization.lantern
         )

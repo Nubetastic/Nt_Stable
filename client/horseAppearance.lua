@@ -299,33 +299,6 @@ function NtHorseAppearance.Apply(horse, storedAppearance, includeEquipment, tran
     return true
 end
 
-function NtHorseAppearance.ApplyHarnessTint(horse, tint0, tint1, tint2, transitionWait)
-    tint0 = tonumber(tint0)
-    tint1 = tonumber(tint1)
-    tint2 = tonumber(tint2)
-    if not tint0 or not tint1 or not tint2 or horse == 0 or not DoesEntityExist(horse) or not WaitForHorseRender(horse) then return end
-    transitionWait = transitionWait or 500
-    local scale = math.floor(GetPedScale(horse) * 100) / 100
-
-    for _, category in ipairs(ConfigStables.Customization) do
-        if ConfigStables.RidingHorseComponents[category.key] then
-            Citizen.InvokeNative(
-                0x4EFC1F8FF1AD94DE,
-                horse,
-                category.categoryHash,
-                joaat(category.tintPalette),
-                tint0,
-                tint1,
-                tint2
-            )
-        end
-    end
-    Citizen.InvokeNative(0xAAB86462966168CE, horse, true)
-    Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
-    Wait(transitionWait)
-    Citizen.InvokeNative(0x25ACFC650B65C538, horse, scale)
-end
-
 function NtHorseAppearance.BackfillMissing()
     if backfillRunning then
         while backfillRunning do Wait(100) end

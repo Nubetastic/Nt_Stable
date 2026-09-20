@@ -28,7 +28,7 @@ for stableName, stable in pairs(ConfigStables.Locations) do
     table.sort(availableModels)
     StableStalls[stableName] = {}
 
-    for stallNumber in pairs(stable.Stale) do
+    for stallNumber in pairs(stable.Stall) do
         if #availableModels == 0 then break end
 
         local modelIndex = math.random(#availableModels)

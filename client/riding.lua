@@ -42,7 +42,7 @@ local statPoints = {
 }
 
 function ShowOwnedHorseInfo(horseData, returnToManager)
-    local base, finalStats, level = HorseStats.Calculate(horseData)
+    local base, finalStats, level, maximumStats = HorseStats.Calculate(horseData)
     if not base then return end
 
     local modifiers = {}
@@ -68,6 +68,8 @@ function ShowOwnedHorseInfo(horseData, returnToManager)
         pullWeight = HorseStats.GetPullWeight(finalStats.strength),
         wild = horseData.wild == 1 or horseData.wild == true or horseData.wild == '1',
         wildModifiers = modifiers,
+        maximumStats = maximumStats,
+        maximumStat = HorseStats.MaximumRank,
         returnToManager = returnToManager,
     }, false)
 end

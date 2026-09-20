@@ -24,7 +24,7 @@ function ShowHorseInfo(horse, showBuy, stableName)
 end
 
 local function OpenHorseInfo(stableName, model)
-    local stats = HorseStats.Get(model)
+    local stats, currentStats, _, maximumStats = HorseStats.Calculate({ horse = model, horsexp = 0 })
     openHorseModel = model
 
     ShowHorseInfo({
@@ -32,14 +32,16 @@ local function OpenHorseInfo(stableName, model)
             breed = stats.breed,
             tameLevel = ConfigStables.Settings.StockTameLevel,
             price = stats.price,
-            health = stats.health,
-            stamina = stats.stamina,
-            agility = stats.agility,
-            speed = stats.speed,
-            acceleration = stats.acceleration,
-            strength = stats.strength,
-            carryWeight = HorseStats.GetCarryWeight(stats.strength),
-            pullWeight = HorseStats.GetPullWeight(stats.strength),
+            health = currentStats.health,
+            stamina = currentStats.stamina,
+            agility = currentStats.agility,
+            speed = currentStats.speed,
+            acceleration = currentStats.acceleration,
+            strength = currentStats.strength,
+            carryWeight = HorseStats.GetCarryWeight(currentStats.strength),
+            pullWeight = HorseStats.GetPullWeight(currentStats.strength),
+            maximumStats = maximumStats,
+            maximumStat = HorseStats.MaximumRank,
     }, true, stableName)
 end
 
@@ -85,7 +87,7 @@ local function SpawnStableHorses(stableName)
         end
 
         if HasModelLoaded(modelHash) then
-            local stallCoords = ConfigStables.Locations[stableName].Stale[stallNumber]
+            local stallCoords = ConfigStables.Locations[stableName].Stall[stallNumber]
             local horse = CreatePed(modelHash, stallCoords.x, stallCoords.y, stallCoords.z - 1.0, stallCoords.w, false, false, 0, 0)
             SetModelAsNoLongerNeeded(modelHash)
 

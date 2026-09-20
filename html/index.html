@@ -4,10 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stable Horse</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <main id="horse-window" class="horse-window" aria-hidden="true">
+        <div class="vignette" aria-hidden="true"></div>
         <section class="horse-card">
             <header>
                 <div>
@@ -31,12 +35,30 @@
 
             <h2>Stats</h2>
             <div class="stats">
-                <div><span>Health</span><strong id="health"></strong></div>
-                <div><span>Stamina</span><strong id="stamina"></strong></div>
-                <div><span>Agility</span><strong id="agility"></strong></div>
-                <div><span>Speed</span><strong id="speed"></strong></div>
-                <div><span>Acceleration</span><strong id="acceleration"></strong></div>
-                <div><span>Strength</span><strong id="strength"></strong></div>
+                <div class="horse-stat">
+                    <div><span>Health:</span><strong id="health"></strong></div>
+                    <div id="health-dots" class="stat-dots"></div>
+                </div>
+                <div class="horse-stat">
+                    <div><span>Stamina:</span><strong id="stamina"></strong></div>
+                    <div id="stamina-dots" class="stat-dots"></div>
+                </div>
+                <div class="horse-stat">
+                    <div><span>Agility:</span><strong id="agility"></strong></div>
+                    <div id="agility-dots" class="stat-dots"></div>
+                </div>
+                <div class="horse-stat">
+                    <div><span>Speed:</span><strong id="speed"></strong></div>
+                    <div id="speed-dots" class="stat-dots"></div>
+                </div>
+                <div class="horse-stat">
+                    <div><span>Acceleration:</span><strong id="acceleration"></strong></div>
+                    <div id="acceleration-dots" class="stat-dots"></div>
+                </div>
+                <div class="horse-stat">
+                    <div><span>Strength:</span><strong id="strength"></strong></div>
+                    <div id="strength-dots" class="stat-dots"></div>
+                </div>
             </div>
 
             <div class="weights">
@@ -78,6 +100,7 @@
     </main>
 
     <main id="wild-register-window" class="horse-window" aria-hidden="true">
+        <div class="vignette" aria-hidden="true"></div>
         <section class="horse-card wild-register-card">
             <header>
                 <div>
@@ -97,21 +120,6 @@
             <div class="summary">
                 <div><span>Breed</span><strong id="wild-register-breed"></strong></div>
                 <div><span>Gender</span><strong id="wild-register-gender"></strong></div>
-            </div>
-
-            <h2>Starting Stats</h2>
-            <div class="stats">
-                <div><span>Health</span><strong id="wild-register-health"></strong></div>
-                <div><span>Stamina</span><strong id="wild-register-stamina"></strong></div>
-                <div><span>Agility</span><strong id="wild-register-agility"></strong></div>
-                <div><span>Speed</span><strong id="wild-register-speed"></strong></div>
-                <div><span>Acceleration</span><strong id="wild-register-acceleration"></strong></div>
-                <div><span>Strength</span><strong id="wild-register-strength"></strong></div>
-            </div>
-
-            <div class="weights">
-                <div><span>Carry Weight</span><strong id="wild-register-carry-weight"></strong></div>
-                <div><span>Pull Weight</span><strong id="wild-register-pull-weight"></strong></div>
             </div>
 
             <label class="wild-register-name">
@@ -134,6 +142,7 @@
     </main>
 
     <main id="manage-window" class="manage-window" aria-hidden="true">
+        <div class="vignette" aria-hidden="true"></div>
         <section class="manage-card">
             <div class="manage-card-content">
             <header>
@@ -392,18 +401,6 @@
                         <span>Tint</span><output id="wagon-tint-value"></output>
                         <input id="wagon-tint" type="range" min="0" step="1">
                     </label>
-                    <label class="customize-category">
-                        <span>Harness Color 1</span><output id="wagon-harness-tint0-value"></output>
-                        <input id="wagon-harness-tint0" data-wagon-harness-tint="harnessTint0" type="range" min="0" max="255" step="1">
-                    </label>
-                    <label class="customize-category">
-                        <span>Harness Color 2</span><output id="wagon-harness-tint1-value"></output>
-                        <input id="wagon-harness-tint1" data-wagon-harness-tint="harnessTint1" type="range" min="0" max="255" step="1">
-                    </label>
-                    <label class="customize-category">
-                        <span>Harness Color 3</span><output id="wagon-harness-tint2-value"></output>
-                        <input id="wagon-harness-tint2" data-wagon-harness-tint="harnessTint2" type="range" min="0" max="255" step="1">
-                    </label>
                     <label id="wagon-lantern-option" class="customize-category">
                         <span>Lantern Style</span><output id="wagon-lantern-value"></output>
                         <input id="wagon-lantern" type="range" min="0" step="1">
@@ -491,6 +488,7 @@
         </section>
     </main>
     <main id="stable-inventory-window" class="stable-inventory-window" aria-hidden="true">
+        <div class="vignette" aria-hidden="true"></div>
         <section class="stable-inventory-card">
             <header>
                 <div>

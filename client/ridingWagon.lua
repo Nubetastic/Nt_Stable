@@ -8,6 +8,43 @@ local wagonMonitorId = 0
 local activeWagonContext
 local HitchWagonHorses
 
+local function SyncWagonHorseAppearance(wagon, slot, horseData)
+    Entity(wagon).state:set(('nt_stables:wagonHorse:%d'):format(slot), {
+        name = horseData.name,
+        gender = horseData.gender,
+        appearance = horseData.appearance,
+        dirt = horseData.dirt,
+    }, true)
+end
+
+for slot = 1, 4 do
+    AddStateBagChangeHandler(('nt_stables:wagonHorse:%d'):format(slot), nil, function(bagName, _, horseData)
+        if type(horseData) ~= 'table' then return end
+
+        CreateThread(function()
+            local timeout = GetGameTimer() + 10000
+            local wagon = GetEntityFromStateBagName(bagName)
+            while (wagon == 0 or not DoesEntityExist(wagon)) and GetGameTimer() < timeout do
+                Wait(100)
+                wagon = GetEntityFromStateBagName(bagName)
+            end
+            if wagon == 0 or not DoesEntityExist(wagon) or wagon == PlayerWagon then return end
+
+            local horse = Citizen.InvokeNative(0xA8BA0BAE0173457B, wagon, slot - 1, Citizen.ResultAsInteger())
+            while (horse == 0 or not DoesEntityExist(horse)) and GetGameTimer() < timeout do
+                Wait(100)
+                horse = Citizen.InvokeNative(0xA8BA0BAE0173457B, wagon, slot - 1, Citizen.ResultAsInteger())
+            end
+            if horse == 0 or not DoesEntityExist(horse) then return end
+
+            SetPedPromptName(horse, horseData.name)
+            Citizen.InvokeNative(0x5653AB26C82938CF, horse, 41611, horseData.gender == 'male' and 0.0 or 1.0)
+            NtHorseAppearance.Apply(horse, horseData.appearance, false)
+            Citizen.InvokeNative(0x5DA12E025D47D4E5, horse, 16, tonumber(horseData.dirt) or 0)
+        end)
+    end)
+end
+
 local function DriveWagonToPlayer()
     wagonDriveId = wagonDriveId + 1
     local currentDriveId = wagonDriveId
@@ -112,13 +149,8 @@ local function SpawnWagonHorses(wagon, wagonData)
                         slot
                     ))
                 end
-                NtHorseAppearance.ApplyHarnessTint(
-                    horse,
-                    wagonData.harness_tint0,
-                    wagonData.harness_tint1,
-                    wagonData.harness_tint2
-                )
                 Citizen.InvokeNative(0x5DA12E025D47D4E5, horse, 16, tonumber(horseData.dirt) or 0)
+                SyncWagonHorseAppearance(wagon, slot, horseData)
             else
                 print(('Nt_Stables: wagon %s did not create a horse in slot %d for %s.'):format(
                     tostring(wagonData.model),

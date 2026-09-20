@@ -39,10 +39,9 @@ let componentPreviewTimer = 0;
 let wagonCatalog = [];
 let selectedWagonModel;
 let wagonCustomizationMode = 'buy';
-let wagonCustomizationValues = { livery: -1, tint: 0, harnessTint0: 255, harnessTint1: 255, harnessTint2: 255, extra: 0, extras: [], lantern: 0 };
-let wagonOriginalCustomization = { livery: -1, tint: 0, harnessTint0: 255, harnessTint1: 255, harnessTint2: 255, extras: [], lantern: 0 };
+let wagonCustomizationValues = { livery: -1, tint: 0, extra: 0, extras: [], lantern: 0 };
+let wagonOriginalCustomization = { livery: -1, tint: 0, extras: [], lantern: 0 };
 let wagonCustomizationPrices = { livery: 0, tint: 0, extras: 0, lanterns: 0 };
-let wagonHarnessTintTimer = 0;
 let ownedHorseCount = 0;
 let wagonHorseAssignment = { wagonId: 0, horseCount: 0, assignments: [], horses: [], selectedSlot: 0 };
 let stableInventory = { items: [], horse: null, wagon: null };
@@ -179,6 +178,27 @@ const wildModifierText = (horse, stat) => {
     const modifier = Number(horse.wildModifiers && horse.wildModifiers[stat]);
     if (!horse.wild || !modifier) return '';
     return ` (${modifier > 0 ? '+' : ''}${modifier} Wild)`;
+};
+
+const renderHorseStat = (horse, stat) => {
+    const maximum = Number(horse.maximumStat);
+    const current = Math.max(0, Math.min(maximum, Number(horse[stat])));
+    const capable = Math.max(current, Math.min(maximum, Number(horse.maximumStats[stat])));
+    const modifier = horse.wild ? Number(horse.wildModifiers && horse.wildModifiers[stat]) || 0 : 0;
+    const modifiedDots = Math.min(current, Math.abs(modifier));
+    const dots = document.getElementById(`${stat}-dots`);
+
+    document.getElementById(stat).textContent = current;
+    dots.replaceChildren();
+
+    for (let value = 1; value <= maximum; value += 1) {
+        const dot = document.createElement('span');
+        if (value <= modifiedDots) dot.className = `stat-dot ${modifier < 0 ? 'negative' : 'positive'}`;
+        else if (value <= current) dot.className = 'stat-dot current';
+        else if (value <= capable) dot.className = 'stat-dot capable';
+        else dot.className = 'stat-dot unavailable';
+        dots.appendChild(dot);
+    }
 };
 
 const renderAuctionHorseDetails = (container, horse, extraLines = []) => {
@@ -703,13 +723,6 @@ const updateWagonCustomizationControls = () => {
         document.getElementById(outputId).textContent = formatValue(values[selectedIndex], selectedIndex);
     });
 
-    [0, 1, 2].forEach((channel) => {
-        const input = document.getElementById(`wagon-harness-tint${channel}`);
-        const value = Number(wagonCustomizationValues[`harnessTint${channel}`]);
-        input.value = value;
-        document.getElementById(`wagon-harness-tint${channel}-value`).textContent = value === 255 ? 'Disabled' : `Color ${value}`;
-    });
-
     document.getElementById('wagon-lantern-option').hidden = wagon.lanterns.length <= 1;
 
     const selectedExtra = Number(wagonCustomizationValues.extra);
@@ -724,9 +737,6 @@ const updateWagonCustomizationControls = () => {
     let price = wagonCustomizationMode === 'buy' ? Number(wagon.price) : 0;
     if (wagonCustomizationValues.livery !== wagonOriginalCustomization.livery) price += Number(wagonCustomizationPrices.livery);
     if (wagonCustomizationValues.tint !== wagonOriginalCustomization.tint) price += Number(wagonCustomizationPrices.tint);
-    if (wagonCustomizationValues.harnessTint0 !== wagonOriginalCustomization.harnessTint0
-        || wagonCustomizationValues.harnessTint1 !== wagonOriginalCustomization.harnessTint1
-        || wagonCustomizationValues.harnessTint2 !== wagonOriginalCustomization.harnessTint2) price += Number(wagonCustomizationPrices.tint);
     price += wagonCustomizationValues.extras.filter((extra) => !wagonOriginalCustomization.extras.includes(extra)).length
         * Number(wagonCustomizationPrices.extras);
     if (wagonCustomizationValues.lantern !== wagonOriginalCustomization.lantern) price += Number(wagonCustomizationPrices.lanterns);
@@ -743,9 +753,6 @@ const renderWagonCustomization = (data) => {
     wagonCustomizationValues = {
         livery: Number(data.selected.livery),
         tint: Number(data.selected.tint),
-        harnessTint0: Number(data.selected.harnessTint0),
-        harnessTint1: Number(data.selected.harnessTint1),
-        harnessTint2: Number(data.selected.harnessTint2),
         extra: Number(data.selected.extra),
         extras: Array.isArray(data.selected.extras) ? data.selected.extras.map(Number) : [],
         lantern: data.selected.lantern,
@@ -753,17 +760,11 @@ const renderWagonCustomization = (data) => {
     wagonOriginalCustomization = wagonCustomizationMode === 'buy' ? {
         livery: wagonCatalog.find((wagon) => wagon.model === selectedWagonModel).livery[0],
         tint: wagonCatalog.find((wagon) => wagon.model === selectedWagonModel).tint[0],
-        harnessTint0: 255,
-        harnessTint1: 255,
-        harnessTint2: 255,
         extras: [],
         lantern: 0,
     } : {
         livery: wagonCustomizationValues.livery,
         tint: wagonCustomizationValues.tint,
-        harnessTint0: wagonCustomizationValues.harnessTint0,
-        harnessTint1: wagonCustomizationValues.harnessTint1,
-        harnessTint2: wagonCustomizationValues.harnessTint2,
         extras: [...wagonCustomizationValues.extras],
         lantern: wagonCustomizationValues.lantern,
     };
@@ -793,9 +794,6 @@ const selectWagonCatalogIndex = async (wagonIndex) => {
     wagonCustomizationValues = {
         livery: Number(result.livery),
         tint: Number(result.tint),
-        harnessTint0: Number(result.harnessTint0),
-        harnessTint1: Number(result.harnessTint1),
-        harnessTint2: Number(result.harnessTint2),
         extra: Number(result.extra),
         extras: [],
         lantern: result.lantern,
@@ -803,9 +801,6 @@ const selectWagonCatalogIndex = async (wagonIndex) => {
     wagonOriginalCustomization = {
         livery: wagonCustomizationValues.livery,
         tint: wagonCustomizationValues.tint,
-        harnessTint0: wagonCustomizationValues.harnessTint0,
-        harnessTint1: wagonCustomizationValues.harnessTint1,
-        harnessTint2: wagonCustomizationValues.harnessTint2,
         extras: [],
         lantern: 0,
     };
@@ -1216,14 +1211,6 @@ window.addEventListener('message', (event) => {
 
         document.getElementById('wild-register-breed').textContent = horse.breed;
         document.getElementById('wild-register-gender').textContent = horse.gender === 'male' ? 'Male' : 'Female';
-        document.getElementById('wild-register-health').textContent = `${horse.health}${wildModifierText(horse, 'health')}`;
-        document.getElementById('wild-register-stamina').textContent = `${horse.stamina}${wildModifierText(horse, 'stamina')}`;
-        document.getElementById('wild-register-agility').textContent = `${horse.agility}${wildModifierText(horse, 'agility')}`;
-        document.getElementById('wild-register-speed').textContent = `${horse.speed}${wildModifierText(horse, 'speed')}`;
-        document.getElementById('wild-register-acceleration').textContent = `${horse.acceleration}${wildModifierText(horse, 'acceleration')}`;
-        document.getElementById('wild-register-strength').textContent = `${horse.strength}${wildModifierText(horse, 'strength')}`;
-        document.getElementById('wild-register-carry-weight').textContent = `${horse.carryWeight} kg`;
-        document.getElementById('wild-register-pull-weight').textContent = `${horse.pullWeight} kg`;
         document.getElementById('wild-register-fee').textContent = `$${Number(quote.registrationFee).toFixed(2)}`;
         document.getElementById('wild-register-slot-fee').textContent = `$${Number(quote.slotFee).toFixed(2)}`;
         document.getElementById('wild-register-total').textContent = `$${Number(quote.total).toFixed(2)}`;
@@ -1249,12 +1236,7 @@ window.addEventListener('message', (event) => {
     document.getElementById('breed').textContent = horse.name || horse.breed;
     document.getElementById('breed-summary').textContent = horse.breed;
     document.getElementById('tame-level').textContent = horse.tameLevel;
-    document.getElementById('health').textContent = `${horse.health}${wildModifierText(horse, 'health')}`;
-    document.getElementById('stamina').textContent = `${horse.stamina}${wildModifierText(horse, 'stamina')}`;
-    document.getElementById('agility').textContent = `${horse.agility}${wildModifierText(horse, 'agility')}`;
-    document.getElementById('speed').textContent = `${horse.speed}${wildModifierText(horse, 'speed')}`;
-    document.getElementById('acceleration').textContent = `${horse.acceleration}${wildModifierText(horse, 'acceleration')}`;
-    document.getElementById('strength').textContent = `${horse.strength}${wildModifierText(horse, 'strength')}`;
+    ['health', 'stamina', 'agility', 'speed', 'acceleration', 'strength'].forEach((stat) => renderHorseStat(horse, stat));
     document.getElementById('carry-weight').textContent = `${horse.carryWeight} kg`;
     document.getElementById('pull-weight').textContent = `${horse.pullWeight} kg`;
     document.getElementById('price').textContent = `$${Number(horse.price).toFixed(2)}`;
@@ -1504,15 +1486,6 @@ document.querySelectorAll('[data-wagon-action]').forEach((button) => {
         wagonCustomizationValues.lantern = wagon.lanterns[Number(document.getElementById('wagon-lantern').value)];
         updateWagonCustomizationControls();
         postNui('previewWagonCustomization', wagonCustomizationValues);
-    });
-});
-
-document.querySelectorAll('[data-wagon-harness-tint]').forEach((input) => {
-    input.addEventListener('input', () => {
-        wagonCustomizationValues[input.dataset.wagonHarnessTint] = Number(input.value);
-        updateWagonCustomizationControls();
-        clearTimeout(wagonHarnessTintTimer);
-        wagonHarnessTintTimer = setTimeout(() => postNui('previewWagonCustomization', wagonCustomizationValues), 75);
     });
 });
 

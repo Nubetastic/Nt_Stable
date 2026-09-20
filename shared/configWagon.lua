@@ -127,7 +127,7 @@ ConfigWagon.Wagons = {
     -------------------------------------------------
     huntercart01 = {
         label = "Hunter Cart",
-        description = "Cart that only fit to carry pelts, hides and furs" .. ", Storage: 200",
+        description = "Cart that only fits to carry pelts, hides and furs" .. ", Storage: 200",
         category = "work",
         horseCount = 1,
         horseOffsets = { [1] = { x = 0.0, y = 3.5, z = 0.0 } },
