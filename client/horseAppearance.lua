@@ -102,7 +102,7 @@ local function ApplyStoredComponents(horse, storedComponents)
 
     for _, category in ipairs(ConfigStables.Customization) do
         local storedValue = components[category.key]
-        if storedValue ~= nil then
+        if storedValue ~= nil and category.key ~= 'Stirrups' then
             local value = tonumber(storedValue) or 0
             local keepNaturalStyle = (category.key == 'Manes' or category.key == 'Tails') and value == 0
             if not keepNaturalStyle then
@@ -117,6 +117,21 @@ local function ApplyStoredComponents(horse, storedComponents)
     end
 
     Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
+    local stirrupValue = tonumber(components.Stirrups) or 0
+    local stirrup = HorseComponents.Stirrups[stirrupValue]
+    if stirrup then
+        for _, existingStirrup in ipairs(HorseComponents.Stirrups) do
+            Citizen.InvokeNative(0x0D7FFA1B2F69ED82, horse, existingStirrup.hash, 0, false)
+        end
+        Citizen.InvokeNative(0xAAB86462966168CE, horse, true)
+        Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
+        if not WaitForHorseRender(horse) then return end
+
+        Citizen.InvokeNative(0xD3A7B003ED343FD9, horse, stirrup.hash, true, true, false)
+        Citizen.InvokeNative(0xAAB86462966168CE, horse, true)
+        Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
+    end
+
     for _, category in ipairs(ConfigStables.Customization) do
         local tints = components[category.tintKey]
         if tints then

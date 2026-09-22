@@ -95,6 +95,7 @@ const closeHorseManager = () => postNui('closeHorseManager');
 const closeStableInventory = () => postNui('closeStableInventory');
 
 const renderStableInventory = (inventory) => {
+    inventory.items = Array.isArray(inventory.items) ? inventory.items : [];
     stableInventory = inventory;
     const itemList = document.getElementById('stable-inventory-items');
     const emptyMessage = document.getElementById('stable-inventory-empty');
@@ -436,7 +437,7 @@ const renderHeldHorses = () => {
         actions.replaceChildren();
         const action = document.createElement('button');
         action.type = 'button'; action.className = type === 'selling' ? 'danger' : '';
-        action.textContent = type === 'selling' ? 'Cancel Listing' : 'Add to Stable';
+        action.textContent = type === 'selling' ? 'Cancel Listing' : 'Stable Horse';
         action.addEventListener('click', async () => {
             action.disabled = true;
             const response = await postNui(type === 'selling' ? 'cancelAuctionListing' : 'receiveAuctionHorse', type === 'selling' ? { listingId: record.id } : { receiveId: record.id });
@@ -514,10 +515,21 @@ const renderWagonHorseAssignment = () => {
                 help.textContent = 'Select a wagon horse slot before choosing a horse.';
                 return;
             }
-            postNui('setWagonHorse', {
+            const selectedSlot = wagonHorseAssignment.selectedSlot;
+            const removeOnly = assignment && Number(assignment.slot) === selectedSlot;
+            wagonHorseAssignment.assignments = wagonHorseAssignment.assignments.filter((assignedHorse) => (
+                Number(assignedHorse.slot) !== selectedSlot && Number(assignedHorse.id) !== Number(horse.id)
+            ));
+            if (!removeOnly) {
+                wagonHorseAssignment.assignments.push({ ...horse, slot: selectedSlot });
+            }
+            renderWagonHorseAssignment();
+            postNui('previewWagonHorses', {
                 wagonId: wagonHorseAssignment.wagonId,
-                slot: wagonHorseAssignment.selectedSlot,
-                horseId: assignment && Number(assignment.slot) === wagonHorseAssignment.selectedSlot ? null : horse.id,
+                assignments: wagonHorseAssignment.assignments.map((assignedHorse) => ({
+                    slot: Number(assignedHorse.slot),
+                    horseId: Number(assignedHorse.id),
+                })),
             });
         });
         horseList.append(button);
@@ -552,6 +564,13 @@ const updateComponentTintInputs = () => {
 const openCustomizationCategory = (category) => {
     selectedCustomizationCategory = category;
     customizeCategories.replaceChildren();
+
+    const loadManeTailColors = document.getElementById('load-mane-tail-colors');
+    const oppositeCategoryKey = category.key === 'Manes' ? 'Tails' : category.key === 'Tails' ? 'Manes' : undefined;
+    const oppositeCategory = customizationOptions.find((option) => option.key === oppositeCategoryKey);
+    loadManeTailColors.hidden = !oppositeCategoryKey;
+    loadManeTailColors.disabled = !oppositeCategory?.customized;
+    if (oppositeCategory) loadManeTailColors.textContent = `Load ${oppositeCategory.label} Colors`;
 
     const selectedModel = category.models
         ? category.models.findIndex((model) => model.values
@@ -1338,6 +1357,10 @@ document.getElementById('stable-inventory-close').addEventListener('click', clos
 document.getElementById('transfer-stable-horse').addEventListener('click', () => transferStableInventory('horse'));
 document.getElementById('transfer-stable-wagon').addEventListener('click', () => transferStableInventory('wagon'));
 document.getElementById('wagon-horses-back').addEventListener('click', () => postNui('closeWagonHorseAssignment'));
+document.getElementById('wagon-horses-save').addEventListener('click', () => postNui('saveWagonHorseAssignments', {
+    wagonId: wagonHorseAssignment.wagonId,
+    assignments: wagonHorseAssignment.assignments.map((horse) => ({ slot: Number(horse.slot), horseId: Number(horse.id) })),
+}));
 document.getElementById('rename-cancel').addEventListener('click', closeManageModals);
 document.getElementById('sell-cancel').addEventListener('click', closeManageModals);
 document.getElementById('riding-warning-cancel').addEventListener('click', closeManageModals);
@@ -1570,6 +1593,21 @@ document.getElementById('component-customize-back').addEventListener('click', ()
     document.getElementById('component-customize-panel').hidden = true;
     document.getElementById('customize-menu').hidden = false;
     requestAnimationFrame(updateScaleLimit);
+});
+document.getElementById('load-mane-tail-colors').addEventListener('click', () => {
+    if (!selectedCustomizationCategory) return;
+
+    const sourceKey = selectedCustomizationCategory.key === 'Manes' ? 'Tails' : 'Manes';
+    const sourceCategory = customizationOptions.find((category) => category.key === sourceKey);
+    if (!sourceCategory?.customized) return;
+
+    selectedCustomizationCategory.tints = { ...sourceCategory.originalTints };
+    updateComponentTintInputs();
+    updateCustomizationPrice();
+    postNui('customizeComponentTint', {
+        category: selectedCustomizationCategory.key,
+        ...selectedCustomizationCategory.tints,
+    });
 });
 document.querySelectorAll('[data-component-tint]').forEach((input) => {
     input.addEventListener('input', () => {

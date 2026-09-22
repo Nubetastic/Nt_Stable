@@ -214,7 +214,6 @@
                 <button type="button" data-horse-action="customize">Customize Horse</button>
                 <button type="button" data-horse-action="stats">Horse Stats</button>
                 <button type="button" data-horse-action="rename">Rename Horse</button>
-                <button class="danger" type="button" data-horse-action="sell">Sell Horse</button>
             </div>
 
             <div class="manage-actions" data-manage-main data-owned-wagon hidden>
@@ -224,10 +223,14 @@
                 <button type="button" data-wagon-action="customize">Customize Wagon</button>
                 <button type="button" data-wagon-action="stats">Wagon Stats</button>
                 <button type="button" data-wagon-action="rename">Rename Wagon</button>
-                <button class="danger" type="button" data-wagon-action="sell">Sell Wagon</button>
             </div>
 
-            <div class="manage-actions auction-entry" data-manage-main>
+            <div class="manage-actions auction-entry stable-sale-actions" data-manage-main>
+                <button class="danger" type="button" data-owned-horse data-horse-action="sell">Sell Horse to Stable</button>
+                <button class="danger" type="button" data-owned-wagon data-wagon-action="sell" hidden>Sell Wagon to Stable</button>
+            </div>
+
+            <div class="manage-actions" data-manage-main>
                 <button id="open-horse-auction" type="button">Horse Auction</button>
             </div>
 
@@ -330,7 +333,8 @@
                 </div>
                 <p id="wagon-horse-help" class="customize-help">Select a wagon horse slot.</p>
                 <div class="customize-actions">
-                    <button id="wagon-horses-back" type="button">Back</button>
+                    <button id="wagon-horses-back" class="secondary" type="button">Back</button>
+                    <button id="wagon-horses-save" type="button">Save Assignments</button>
                 </div>
             </div>
 
@@ -358,6 +362,7 @@
                             <span>Color Channel 3</span><output data-component-tint-value="tint2"></output>
                             <input data-component-tint="tint2" type="range" min="0" max="255" step="1">
                         </label>
+                        <button id="load-mane-tail-colors" class="secondary" type="button" hidden disabled>Load Mane/Tail Colors</button>
                     </div>
                 </div>
                 <div id="customize-price-row" class="customize-price-row">

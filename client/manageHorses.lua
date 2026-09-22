@@ -231,7 +231,7 @@ local function SpawnPreviewWagon(wagon, spawnDraftHorses)
     while not HasModelLoaded(modelHash) and GetGameTimer() < timeout do Wait(0) end
 
     if not HasModelLoaded(modelHash) then
-        lib.notify({ title = 'Failed to load wagon preview.', type = 'error', duration = 10000 })
+        lib.notify({ title = 'Failed to load wagon preview.', type = 'error', duration = 10000, position = 'top-center' })
         return
     end
 
@@ -241,7 +241,7 @@ local function SpawnPreviewWagon(wagon, spawnDraftHorses)
 
     if previewWagon == 0 or not DoesEntityExist(previewWagon) then
         previewWagon = 0
-        lib.notify({ title = 'Failed to spawn wagon preview.', type = 'error', duration = 10000 })
+        lib.notify({ title = 'Failed to spawn wagon preview.', type = 'error', duration = 10000, position = 'top-center' })
         return
     end
 
@@ -255,14 +255,15 @@ local function SpawnPreviewWagon(wagon, spawnDraftHorses)
     FreezeEntityPosition(previewWagon, true)
     ApplyWagonPreviewCustomization(previewWagon, wagon, spawnDraftHorses)
     SetVehicleDirtLevel(previewWagon, 0.0)
-    if spawnDraftHorses then
-        local spawnedWagon = previewWagon
-        SetTimeout(250, function()
-            if previewWagon == spawnedWagon and DoesEntityExist(spawnedWagon) then
+    local spawnedWagon = previewWagon
+    SetTimeout(250, function()
+        if previewWagon == spawnedWagon and DoesEntityExist(spawnedWagon) then
+            SetVehicleDirtLevel(spawnedWagon, 0.0)
+            if spawnDraftHorses then
                 SpawnPreviewWagonHorses(spawnedWagon, wagon)
             end
-        end)
-    end
+        end
+    end)
 
     if wagon.needs_repair == 1 or wagon.needs_repair == true then
         local damagedPreview = previewWagon
@@ -308,15 +309,17 @@ local function GetComponentTints(horse, categoryHash)
     local componentIndex = GetComponentIndex(horse, categoryHash)
     if not componentIndex then return end
 
-    local palette, tint0, tint1, tint2 = Citizen.InvokeNative(
+    local foundTint, palette, tint0, tint1, tint2 = Citizen.InvokeNative(
         0xE7998FEC53A33BBE,
         horse,
         componentIndex,
         Citizen.PointerValueInt(),
         Citizen.PointerValueInt(),
         Citizen.PointerValueInt(),
-        Citizen.PointerValueInt()
+        Citizen.PointerValueInt(),
+        Citizen.ReturnResultAnyway()
     )
+    if not foundTint then return end
 
     return { palette = palette, tint0 = tint0, tint1 = tint1, tint2 = tint2 }
 end
@@ -329,10 +332,27 @@ local function ApplyComponentTints(horse, category, tints)
     Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
 end
 
+local function ApplyCustomStirrups(horse, value)
+    local component = HorseComponents.Stirrups[value]
+    if not component then return false end
+
+    for _, stirrup in ipairs(HorseComponents.Stirrups) do
+        Citizen.InvokeNative(0x0D7FFA1B2F69ED82, horse, stirrup.hash, 0, false)
+    end
+    Citizen.InvokeNative(0xAAB86462966168CE, horse, true)
+    Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
+    if not WaitForHorseRender(horse) then return false end
+
+    Citizen.InvokeNative(0xD3A7B003ED343FD9, horse, component.hash, true, true, false)
+    Citizen.InvokeNative(0xAAB86462966168CE, horse, true)
+    Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
+    return WaitForHorseRender(horse)
+end
+
 local function ApplyHorseComponents(horse, components)
     for _, category in ipairs(ConfigStables.Customization) do
         local storedValue = components[category.key]
-        if storedValue ~= nil then
+        if storedValue ~= nil and category.key ~= 'Stirrups' then
             local value = tonumber(storedValue) or 0
             local keepNaturalStyle = (category.key == 'Manes' or category.key == 'Tails') and value == 0
 
@@ -348,6 +368,9 @@ local function ApplyHorseComponents(horse, components)
     end
 
     Citizen.InvokeNative(0xCC8CA3E88256E58F, horse, false, true, true, true, false)
+    local stirrupValue = tonumber(components.Stirrups) or 0
+    if stirrupValue > 0 then ApplyCustomStirrups(horse, stirrupValue) end
+
     for _, category in ipairs(ConfigStables.Customization) do
         ApplyComponentTints(horse, category, components[category.tintKey])
     end
@@ -432,7 +455,7 @@ local function SpawnPreviewHorse(horse)
     end
 
     if not HasModelLoaded(modelHash) then
-        lib.notify({ title = 'Failed to load horse preview.', type = 'error', duration = 10000 })
+        lib.notify({ title = 'Failed to load horse preview.', type = 'error', duration = 10000, position = 'top-center' })
         return
     end
 
@@ -520,6 +543,9 @@ local function OpenCustomization(horse)
             models = category.models,
             tints = customization.components[category.tintKey],
             originalTints = customization.originalComponents[category.tintKey],
+            customized = (category.key == 'Manes' and customization.components.ManeCustomized == true)
+                or (category.key == 'Tails' and customization.components.TailCustomized == true)
+                or ((category.key == 'Manes' or category.key == 'Tails') and originalValue > 0),
         }
     end
 
@@ -571,8 +597,6 @@ local function OpenWagonCustomization(wagon)
     if wagon and wagon.extras then
         local success, storedExtras = pcall(json.decode, wagon.extras)
         if success and type(storedExtras) == 'table' then enabledExtras = storedExtras end
-    elseif wagon and tonumber(wagon.extra) and tonumber(wagon.extra) > 0 then
-        enabledExtras[1] = tonumber(wagon.extra)
     end
 
     wagonCustomization = {
@@ -582,7 +606,7 @@ local function OpenWagonCustomization(wagon)
         name = wagon and wagon.name or wagonConfig.label,
         livery = wagon and tonumber(wagon.livery) or wagonConfig.customizations.livery[1],
         tint = wagon and tonumber(wagon.tint) or wagonConfig.customizations.tint[1],
-        extra = wagon and tonumber(wagon.extra) or wagonConfig.customizations.extras[1],
+        extra = enabledExtras[1] or wagonConfig.customizations.extras[1],
         extras = enabledExtras,
         lantern = wagon and wagon.lantern ~= '0' and wagon.lantern or 0,
         horses = wagon and wagon.horses or {},
@@ -695,6 +719,11 @@ RegisterNUICallback('customizeComponentTint', function(data, cb)
     tint1 = math.floor(math.max(0, math.min(255, tint1)))
     tint2 = math.floor(math.max(0, math.min(255, tint2)))
     customization.components[selectedCategory.tintKey] = { tint0 = tint0, tint1 = tint1, tint2 = tint2 }
+    if selectedCategory.key == 'Manes' then
+        customization.components.ManeCustomized = true
+    elseif selectedCategory.key == 'Tails' then
+        customization.components.TailCustomized = true
+    end
     ApplyComponentTints(previewHorse, selectedCategory, customization.components[selectedCategory.tintKey])
     cb({ success = true })
 end)
@@ -720,18 +749,23 @@ RegisterNUICallback('managedHorseAction', function(data, cb)
     if data.action == 'setRiding' then
         local result = lib.callback.await('nt_stables:server:setRidingHorse', false, horse.id)
         if result and result.success then
-            local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
-            managedHorses = managerData.horses
-            managedWagons = managerData.wagons
-            stableManagerData = managerData
             for _, ownedHorse in ipairs(managedHorses) do
                 ownedHorse.active = ownedHorse.id == horse.id and 1 or 0
+            end
+            horse.isWagonHorse = false
+            for _, ownedWagon in ipairs(managedWagons) do
+                for index = #ownedWagon.horses, 1, -1 do
+                    if tonumber(ownedWagon.horses[index].id) == tonumber(horse.id) then
+                        table.remove(ownedWagon.horses, index)
+                    end
+                end
+                ownedWagon.ready = #ownedWagon.horses == ConfigWagon.Wagons[ownedWagon.model].horseCount
+                if result.clearedWagon then ownedWagon.active = false end
             end
 
             TriggerEvent('nt_stables:client:ridingHorseChanged')
             if result.clearedWagon then TriggerEvent('nt_stables:client:ridingWagonChanged') end
             SendStableManagerData('refreshManagedHorses', horse.id)
-            lib.notify({ title = horse.name .. ' is now your riding horse.', type = 'success', duration = 10000 })
         end
 
         return cb({ success = result and result.success == true })
@@ -762,9 +796,8 @@ RegisterNUICallback('managedWagonAction', function(data, cb)
             end
             TriggerEvent('nt_stables:client:ridingWagonChanged')
             SendStableManagerData('refreshManagedHorses', nil, wagon.id)
-            lib.notify({ title = wagon.name .. ' is now your active wagon.', type = 'success', duration = 10000 })
         elseif result and result.message then
-            lib.notify({ title = result.message, type = 'error', duration = 10000 })
+            lib.notify({ title = result.message, type = 'error', duration = 10000, position = 'top-center' })
         end
         return cb({ success = result and result.success == true })
     end
@@ -772,16 +805,11 @@ RegisterNUICallback('managedWagonAction', function(data, cb)
     if data.action == 'repair' then
         local result = lib.callback.await('nt_stables:server:repairWagon', false, wagon.id)
         if result and result.success then
-            local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
-            managedHorses = managerData.horses
-            managedWagons = managerData.wagons
-            stableManagerData = managerData
-            local repairedWagon = GetManagedWagon(wagon.id)
-            if repairedWagon then SpawnPreviewWagon(repairedWagon) end
+            wagon.needs_repair = 0
+            SpawnPreviewWagon(wagon)
             SendStableManagerData('refreshManagedHorses', nil, wagon.id)
-            lib.notify({ title = ('%s repaired for $%.2f.'):format(wagon.name, result.price), type = 'success', duration = 10000 })
         elseif result and result.message then
-            lib.notify({ title = result.message, type = 'error', duration = 10000 })
+            lib.notify({ title = result.message, type = 'error', duration = 10000, position = 'top-center' })
         end
         return cb({ success = result and result.success == true })
     end
@@ -821,46 +849,60 @@ RegisterNUICallback('managedWagonAction', function(data, cb)
     cb({ success = false })
 end)
 
-RegisterNUICallback('setWagonHorse', function(data, cb)
+RegisterNUICallback('previewWagonHorses', function(data, cb)
     local wagonId = tonumber(data.wagonId)
-    if wagonId ~= tonumber(assignmentWagonId) then return cb({ success = false }) end
-
-    local result = lib.callback.await(
-        'nt_stables:server:setWagonHorse',
-        false,
-        wagonId,
-        tonumber(data.slot),
-        tonumber(data.horseId)
-    )
-    if not result or not result.success then
-        lib.notify({ title = result and result.message or 'Unable to update wagon horse.', type = 'error', duration = 10000 })
+    local wagon = GetManagedWagon(wagonId)
+    if wagonId ~= tonumber(assignmentWagonId) or not wagon or type(data.assignments) ~= 'table' then
         return cb({ success = false })
     end
 
-    local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
-    managedHorses = managerData.horses
-    managedWagons = managerData.wagons
-    stableManagerData = managerData
+    local previewAssignments = {}
+    for _, assignment in ipairs(data.assignments) do
+        local horse = GetManagedHorse(tonumber(assignment.horseId))
+        local slot = tonumber(assignment.slot)
+        if horse and slot then
+            local previewHorse = {}
+            for key, value in pairs(horse) do previewHorse[key] = value end
+            previewHorse.slot = slot
+            previewAssignments[#previewAssignments + 1] = previewHorse
+        end
+    end
+    if previewWagon ~= 0 and DoesEntityExist(previewWagon) then
+        SpawnPreviewWagonHorses(previewWagon, { model = wagon.model, horses = previewAssignments })
+    end
+    cb({ success = true })
+end)
+
+RegisterNUICallback('saveWagonHorseAssignments', function(data, cb)
+    local wagonId = tonumber(data.wagonId)
     local wagon = GetManagedWagon(wagonId)
-    if wagon and previewWagon ~= 0 and DoesEntityExist(previewWagon) then
-        SpawnPreviewWagonHorses(previewWagon, wagon)
-    elseif wagon then
-        SpawnPreviewWagon(wagon, true)
+    if wagonId ~= tonumber(assignmentWagonId) or not wagon or type(data.assignments) ~= 'table' then
+        return cb({ success = false })
+    end
+
+    local result = lib.callback.await('nt_stables:server:setWagonHorses', false, wagonId, data.assignments)
+    if not result or not result.success then
+        lib.notify({ title = result and result.message or 'Unable to save wagon horses.', type = 'error', duration = 10000, position = 'top-center' })
+        return cb({ success = false })
+    end
+
+    wagon.horses = result.assignments or {}
+    wagon.ready = #wagon.horses == ConfigWagon.Wagons[wagon.model].horseCount
+    for _, horse in ipairs(managedHorses) do horse.isWagonHorse = false end
+    for _, ownedWagon in ipairs(managedWagons) do
+        for _, horse in ipairs(ownedWagon.horses or {}) do
+            local managedHorse = GetManagedHorse(tonumber(horse.id))
+            if managedHorse then managedHorse.isWagonHorse = true end
+        end
     end
 
     if result.wasRiding then
         TriggerEvent('nt_stables:client:ridingHorseChanged')
-        lib.notify({ title = 'The assigned horse is no longer your riding horse.', type = 'inform', duration = 10000 })
     end
-    if result.clearedWagon or result.activeWagonChanged then
-        TriggerEvent('nt_stables:client:ridingWagonChanged')
-    end
-
-    SendNUIMessage({
-        action = 'refreshWagonHorseAssignment',
-        assignments = wagon and wagon.horses or {},
-        horses = BuildHorseList(),
-    })
+    assignmentWagonId = nil
+    SpawnPreviewWagon(wagon)
+    SendNUIMessage({ action = 'closeWagonHorseAssignment' })
+    SendStableManagerData('refreshManagedHorses', nil, wagon.id)
     cb({ success = true })
 end)
 
@@ -967,25 +1009,31 @@ RegisterNUICallback('saveWagonCustomization', function(data, cb)
     end
 
     if not result or not result.success then
-        lib.notify({ title = result and result.message or 'Unable to save wagon.', type = 'error', duration = 10000 })
+        lib.notify({ title = result and result.message or 'Unable to save wagon.', type = 'error', duration = 10000, position = 'top-center' })
         return cb({ success = false })
     end
 
     local selectedWagonId = result.wagonId or wagonCustomization.wagon.id
     local wasPurchase = wagonCustomization.mode == 'buy'
+    if wasPurchase then
+        managedWagons[#managedWagons + 1] = result.wagon
+        stableManagerData.wagonSlots.used = stableManagerData.wagonSlots.used + 1
+        stableManagerData.wagonSlots.canSell = false
+    else
+        local savedWagon = GetManagedWagon(selectedWagonId)
+        if savedWagon then
+            savedWagon.livery = wagonCustomization.livery
+            savedWagon.tint = wagonCustomization.tint
+            savedWagon.extras = json.encode(wagonCustomization.extras)
+            savedWagon.lantern = wagonCustomization.lantern
+        end
+    end
     wagonCustomization = nil
-
-    local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
-    managedHorses = managerData.horses
-    managedWagons = managerData.wagons
-    stableManagerData = managerData
 
     local selectedWagon = GetManagedWagon(selectedWagonId)
     if selectedWagon then SpawnPreviewWagon(selectedWagon) end
-    TriggerEvent('nt_stables:client:ridingWagonChanged')
     SendNUIMessage({ action = 'closeWagonCustomization' })
     SendStableManagerData('refreshManagedHorses', nil, selectedWagonId)
-    lib.notify({ title = wasPurchase and 'Wagon purchased.' or 'Wagon customization saved.', type = 'success', duration = 10000 })
     cb({ success = true })
 end)
 
@@ -1014,7 +1062,7 @@ end)
 RegisterNUICallback('changeStableSlots', function(data, cb)
     local result = lib.callback.await('nt_stables:server:changeStableSlots', false, data.slotType, data.action)
     if not result or not result.success then
-        lib.notify({ title = result and result.message or 'Unable to change stable slots.', type = 'error', duration = 10000 })
+        lib.notify({ title = result and result.message or 'Unable to change stable slots.', type = 'error', duration = 10000, position = 'top-center' })
         return cb({ success = false })
     end
 
@@ -1022,9 +1070,6 @@ RegisterNUICallback('changeStableSlots', function(data, cb)
     managedWagons = result.wagons
     stableManagerData = result
 
-    local action = data.action == 'buy' and 'purchased' or 'sold'
-    local slotName = data.slotType == 'horse' and 'Horse' or 'Wagon'
-    lib.notify({ title = ('%s slot %s.'):format(slotName, action), type = 'success', duration = 10000 })
     result.horses = BuildHorseList()
     result.wagons = BuildWagonList()
     result.selectedHorseId = tonumber(data.selectedHorseId)
@@ -1049,15 +1094,22 @@ RegisterNUICallback('customizeHorseComponent', function(data, cb)
     end
 
     customization.components[selectedCategory.key] = value
+    if selectedCategory.key == 'Manes' then
+        customization.components.ManeCustomized = true
+    elseif selectedCategory.key == 'Tails' then
+        customization.components.TailCustomized = true
+    end
     if not WaitForHorseRender(previewHorse) then return cb({ success = false }) end
 
-    local keepNaturalStyle = (selectedCategory.key == 'Manes' or selectedCategory.key == 'Tails') and value == 0
-    if keepNaturalStyle then
+    local restoreDefaultStyle = (selectedCategory.key == 'Manes' or selectedCategory.key == 'Tails' or selectedCategory.key == 'Stirrups') and value == 0
+    if restoreDefaultStyle then
         SpawnPreviewHorse({
             horse = customization.horse.horse,
             gender = customization.horse.gender,
             components = customization.components,
         })
+    elseif selectedCategory.key == 'Stirrups' then
+        if not ApplyCustomStirrups(previewHorse, value) then return cb({ success = false }) end
     else
         Citizen.InvokeNative(0xD710A5007C2AC539, previewHorse, selectedCategory.categoryHash, 0)
 
@@ -1070,13 +1122,17 @@ RegisterNUICallback('customizeHorseComponent', function(data, cb)
     end
     if not WaitForHorseRender(previewHorse) then return cb({ success = false }) end
 
-    local componentTints = GetComponentTints(previewHorse, selectedCategory.categoryHash)
-    if componentTints then
-        customization.components[selectedCategory.tintKey] = {
-            tint0 = componentTints.tint0,
-            tint1 = componentTints.tint1,
-            tint2 = componentTints.tint2,
-        }
+    if selectedCategory.key == 'Manes' or selectedCategory.key == 'Tails' then
+        ApplyComponentTints(previewHorse, selectedCategory, customization.components[selectedCategory.tintKey])
+    else
+        local componentTints = GetComponentTints(previewHorse, selectedCategory.categoryHash)
+        if componentTints then
+            customization.components[selectedCategory.tintKey] = {
+                tint0 = componentTints.tint0,
+                tint1 = componentTints.tint1,
+                tint2 = componentTints.tint2,
+            }
+        end
     end
 
     cb({ success = true, tints = customization.components[selectedCategory.tintKey] })
@@ -1085,23 +1141,22 @@ end)
 RegisterNUICallback('saveHorseCustomization', function(_, cb)
     if not customization then return cb({ success = false }) end
 
-    local horse = customization.horse
+    local activeCustomization = customization
+    local horse = activeCustomization.horse
     local appearance = NtHorseAppearance.Capture(previewHorse)
     if not appearance then
-        lib.notify({ title = 'The horse appearance could not be captured.', type = 'error', duration = 10000 })
+        lib.notify({ title = 'The horse appearance could not be captured.', type = 'error', duration = 10000, position = 'top-center' })
         return cb({ success = false })
     end
 
-    local result = lib.callback.await('nt_stables:server:saveHorseComponents', false, horse.id, customization.components, appearance)
+    local result = lib.callback.await('nt_stables:server:saveHorseComponents', false, horse.id, activeCustomization.components, appearance)
     if result and result.success then
-        horse.components = json.encode(customization.components)
+        horse.components = json.encode(activeCustomization.components)
         horse.appearance = json.encode(appearance)
         if horse.active == 1 or horse.active == true then TriggerEvent('nt_stables:client:ridingHorseChanged') end
-        customization = nil
-        SendNUIMessage({ action = 'closeHorseCustomization' })
-        lib.notify({ title = ('%s customized for $%s.'):format(horse.name, result.price), type = 'success', duration = 10000 })
+        if customization == activeCustomization then OpenCustomization(horse) end
     else
-        lib.notify({ title = result and result.message or 'Unable to save horse customization.', type = 'error', duration = 10000 })
+        lib.notify({ title = result and result.message or 'Unable to save horse customization.', type = 'error', duration = 10000, position = 'top-center' })
     end
 
     cb({ success = result and result.success or false })
@@ -1133,9 +1188,8 @@ RegisterNUICallback('renameManagedHorse', function(data, cb)
         end
 
         SendStableManagerData('refreshManagedHorses', horse.id)
-        lib.notify({ title = 'Horse renamed to ' .. horseName .. '.', type = 'success', duration = 10000 })
     else
-        lib.notify({ title = 'Horse names must contain 1 to 32 characters.', type = 'error', duration = 10000 })
+        lib.notify({ title = 'Horse names must contain 1 to 32 characters.', type = 'error', duration = 10000, position = 'top-center' })
     end
 
     cb({ success = success })
@@ -1145,7 +1199,7 @@ RegisterNUICallback('getManagedHorseSellPrice', function(data, cb)
     local horse = GetManagedHorse(tonumber(data.horseId))
     if not horse then return cb({ success = false }) end
 
-    local sellPrice = lib.callback.await('nt_stables:server:getHorseSellPrice', false, horse.id)
+    local sellPrice = horse.sellPrice
     cb({ success = sellPrice ~= nil, price = sellPrice, name = horse.name })
 end)
 
@@ -1155,7 +1209,7 @@ RegisterNUICallback('sellManagedHorse', function(data, cb)
 
     local result = lib.callback.await('nt_stables:server:sellHorse', false, horse.id)
     if not result or result.success == false then
-        lib.notify({ title = result and result.message or 'Unable to sell this horse.', type = 'error', duration = 10000 })
+        lib.notify({ title = result and result.message or 'Unable to sell this horse.', type = 'error', duration = 10000, position = 'top-center' })
         return cb({ success = false })
     end
 
@@ -1169,12 +1223,9 @@ RegisterNUICallback('sellManagedHorse', function(data, cb)
         end
     end
 
-    lib.notify({ title = ('%s sold for $%s.'):format(horse.name, result.price), type = 'success', duration = 10000 })
-
-    local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
-    managedHorses = managerData.horses
-    managedWagons = managerData.wagons
-    stableManagerData = managerData
+    stableManagerData.horseSlots.used = math.max(0, stableManagerData.horseSlots.used - 1)
+    stableManagerData.horseSlots.canSell = stableManagerData.horseSlots.total > Config.StableSlots.Horse.DefaultSlots
+        and stableManagerData.horseSlots.used < stableManagerData.horseSlots.total
 
     if #managedHorses > 0 then
         SpawnPreviewHorse(managedHorses[1])
@@ -1199,9 +1250,8 @@ RegisterNUICallback('renameManagedWagon', function(data, cb)
     if success then
         wagon.name = wagonName
         SendStableManagerData('refreshManagedHorses', nil, wagon.id)
-        lib.notify({ title = 'Wagon renamed to ' .. wagonName .. '.', type = 'success', duration = 10000 })
     else
-        lib.notify({ title = 'Wagon names must contain 1 to 100 valid characters.', type = 'error', duration = 10000 })
+        lib.notify({ title = 'Wagon names must contain 1 to 100 valid characters.', type = 'error', duration = 10000, position = 'top-center' })
     end
 
     cb({ success = success })
@@ -1211,7 +1261,7 @@ RegisterNUICallback('getManagedWagonSellPrice', function(data, cb)
     local wagon = GetManagedWagon(tonumber(data.wagonId))
     if not wagon then return cb({ success = false }) end
 
-    local sellPrice = lib.callback.await('nt_stables:server:getWagonSellPrice', false, wagon.id)
+    local sellPrice = wagon.sellPrice
     cb({ success = sellPrice ~= nil, price = sellPrice, name = wagon.name })
 end)
 
@@ -1221,7 +1271,7 @@ RegisterNUICallback('sellManagedWagon', function(data, cb)
 
     local result = lib.callback.await('nt_stables:server:sellWagon', false, wagon.id)
     if not result or result.success == false then
-        lib.notify({ title = result and result.message or 'Unable to sell this wagon.', type = 'error', duration = 10000 })
+        lib.notify({ title = result and result.message or 'Unable to sell this wagon.', type = 'error', duration = 10000, position = 'top-center' })
         return cb({ success = false })
     end
 
@@ -1230,12 +1280,15 @@ RegisterNUICallback('sellManagedWagon', function(data, cb)
         TriggerEvent('nt_stables:client:ridingHorseChanged')
     end
 
-    lib.notify({ title = ('%s sold for $%s.'):format(wagon.name, result.price), type = 'success', duration = 10000 })
-
-    local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
-    managedHorses = managerData.horses
-    managedWagons = managerData.wagons
-    stableManagerData = managerData
+    for index, ownedWagon in ipairs(managedWagons) do
+        if ownedWagon.id == wagon.id then
+            table.remove(managedWagons, index)
+            break
+        end
+    end
+    stableManagerData.wagonSlots.used = math.max(0, stableManagerData.wagonSlots.used - 1)
+    stableManagerData.wagonSlots.canSell = stableManagerData.wagonSlots.total > Config.StableSlots.Wagon.DefaultSlots
+        and stableManagerData.wagonSlots.used < stableManagerData.wagonSlots.total
 
     if managedWagons[1] then
         SpawnPreviewWagon(managedWagons[1])
@@ -1271,13 +1324,24 @@ RegisterNUICallback('createAuctionListing', function(data, cb)
     if result and result.success then
         if result.wasActive then TriggerEvent('nt_stables:client:ridingHorseChanged') end
         if result.clearedWagon then TriggerEvent('nt_stables:client:ridingWagonChanged') end
-        local managerData = lib.callback.await('nt_stables:server:getStableManagerData', false)
-        managedHorses, managedWagons, stableManagerData = managerData.horses, managerData.wagons, managerData
+        for index, ownedHorse in ipairs(managedHorses) do
+            if tonumber(ownedHorse.id) == tonumber(horse.id) then
+                table.remove(managedHorses, index)
+                break
+            end
+        end
+        for _, wagon in ipairs(managedWagons) do
+            for index = #wagon.horses, 1, -1 do
+                if tonumber(wagon.horses[index].id) == tonumber(horse.id) then table.remove(wagon.horses, index) end
+            end
+            wagon.ready = #wagon.horses == ConfigWagon.Wagons[wagon.model].horseCount
+            if result.clearedWagon then wagon.active = false end
+        end
+        stableManagerData.horseSlots.used = math.max(0, stableManagerData.horseSlots.used - 1)
         auctionHeld = lib.callback.await('nt_stables:server:getHeldHorses', false)
         SendNUIMessage({ action = 'refreshAuctionHeld', held = auctionHeld })
-        lib.notify({ title = horse.name .. ' was moved to the auction stable.', type = 'success', duration = 10000 })
     else
-        lib.notify({ title = result and result.message or 'The horse could not be listed.', type = 'error', duration = 10000 })
+        lib.notify({ title = result and result.message or 'The horse could not be listed.', type = 'error', duration = 10000, position = 'top-center' })
     end
     cb(result or { success = false })
 end)
@@ -1294,10 +1358,8 @@ end)
 
 RegisterNUICallback('trackAuction', function(data, cb)
     local result = lib.callback.await('nt_stables:server:trackAuction', false, data.listingId)
-    if result and result.success then
-        lib.notify({ title = 'Auction added to your tracked auctions.', type = 'success', duration = 10000 })
-    else
-        lib.notify({ title = result and result.message or 'The auction could not be tracked.', type = 'error', duration = 10000 })
+    if not result or not result.success then
+        lib.notify({ title = result and result.message or 'The auction could not be tracked.', type = 'error', duration = 10000, position = 'top-center' })
     end
     cb(result or { success = false })
 end)
@@ -1320,13 +1382,17 @@ end)
 
 RegisterNUICallback('buyAuctionHorse', function(data, cb)
     local result = lib.callback.await('nt_stables:server:buyAuctionHorse', false, data.listingId)
-    lib.notify({ title = result and result.success and 'Horse purchased. It is waiting under Horses Held.' or (result and result.message or 'Purchase failed.'), type = result and result.success and 'success' or 'error', duration = 10000 })
+    if not result or not result.success then
+        lib.notify({ title = result and result.message or 'Purchase failed.', type = 'error', duration = 10000, position = 'top-center' })
+    end
     cb(result or { success = false })
 end)
 
 RegisterNUICallback('placeAuctionBid', function(data, cb)
     local result = lib.callback.await('nt_stables:server:placeAuctionBid', false, data.listingId, data.amount)
-    lib.notify({ title = result and result.success and 'Bid placed.' or (result and result.message or 'Bid failed.'), type = result and result.success and 'success' or 'error', duration = 10000 })
+    if not result or not result.success then
+        lib.notify({ title = result and result.message or 'Bid failed.', type = 'error', duration = 10000, position = 'top-center' })
+    end
     cb(result or { success = false })
 end)
 
@@ -1347,7 +1413,9 @@ end)
 RegisterNUICallback('cancelAuctionListing', function(data, cb)
     local result = lib.callback.await('nt_stables:server:cancelAuctionListing', false, data.listingId)
     if result and result.success then auctionHeld = lib.callback.await('nt_stables:server:getHeldHorses', false) end
-    lib.notify({ title = result and result.success and 'Listing cancelled. The horse is waiting for your stable.' or (result and result.message or 'Cancellation failed.'), type = result and result.success and 'success' or 'error', duration = 10000 })
+    if not result or not result.success then
+        lib.notify({ title = result and result.message or 'Cancellation failed.', type = 'error', duration = 10000, position = 'top-center' })
+    end
     cb(result and result.success and { success = true, held = auctionHeld, horses = BuildAuctionOwnedHorses() } or (result or { success = false }))
 end)
 
@@ -1359,14 +1427,18 @@ RegisterNUICallback('receiveAuctionHorse', function(data, cb)
         auctionHeld = lib.callback.await('nt_stables:server:getHeldHorses', false)
         CreateThread(NtHorseAppearance.BackfillMissing)
     end
-    lib.notify({ title = result and result.success and 'Horse added to your stable.' or (result and result.message or 'The horse could not be received.'), type = result and result.success and 'success' or 'error', duration = 10000 })
+    if not result or not result.success then
+        lib.notify({ title = result and result.message or 'The horse could not be received.', type = 'error', duration = 10000, position = 'top-center' })
+    end
     cb(result and result.success and { success = true, held = auctionHeld, horses = BuildAuctionOwnedHorses() } or (result or { success = false }))
 end)
 
 RegisterNUICallback('collectAuctionFunds', function(_, cb)
     local result = lib.callback.await('nt_stables:server:collectAuctionFunds', false)
     if result and result.success then auctionHeld.funds = 0 end
-    lib.notify({ title = result and result.success and ('$%.2f collected.'):format(result.amount) or (result and result.message or 'Funds could not be collected.'), type = result and result.success and 'success' or 'error', duration = 10000 })
+    if not result or not result.success then
+        lib.notify({ title = result and result.message or 'Funds could not be collected.', type = 'error', duration = 10000, position = 'top-center' })
+    end
     cb(result or { success = false })
 end)
 

@@ -17,6 +17,7 @@ shared_scripts {
 client_scripts {
     'client/blips.lua',
     'client/horseAppearance.lua',
+    'client/WagonSync.lua',
     'client/stalls.lua',
     'client/findRoad.lua',
     'client/riding.lua',
@@ -29,8 +30,11 @@ client_scripts {
 
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
+    'server/versionchecker.lua',
+    'server/database.lua',
     'server/stalls.lua',
     'server/playerHorses.lua',
+    'server/WagonSync.lua',
     'server/auction.lua',
 }
 

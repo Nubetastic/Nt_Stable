@@ -8,43 +8,6 @@ local wagonMonitorId = 0
 local activeWagonContext
 local HitchWagonHorses
 
-local function SyncWagonHorseAppearance(wagon, slot, horseData)
-    Entity(wagon).state:set(('nt_stables:wagonHorse:%d'):format(slot), {
-        name = horseData.name,
-        gender = horseData.gender,
-        appearance = horseData.appearance,
-        dirt = horseData.dirt,
-    }, true)
-end
-
-for slot = 1, 4 do
-    AddStateBagChangeHandler(('nt_stables:wagonHorse:%d'):format(slot), nil, function(bagName, _, horseData)
-        if type(horseData) ~= 'table' then return end
-
-        CreateThread(function()
-            local timeout = GetGameTimer() + 10000
-            local wagon = GetEntityFromStateBagName(bagName)
-            while (wagon == 0 or not DoesEntityExist(wagon)) and GetGameTimer() < timeout do
-                Wait(100)
-                wagon = GetEntityFromStateBagName(bagName)
-            end
-            if wagon == 0 or not DoesEntityExist(wagon) or wagon == PlayerWagon then return end
-
-            local horse = Citizen.InvokeNative(0xA8BA0BAE0173457B, wagon, slot - 1, Citizen.ResultAsInteger())
-            while (horse == 0 or not DoesEntityExist(horse)) and GetGameTimer() < timeout do
-                Wait(100)
-                horse = Citizen.InvokeNative(0xA8BA0BAE0173457B, wagon, slot - 1, Citizen.ResultAsInteger())
-            end
-            if horse == 0 or not DoesEntityExist(horse) then return end
-
-            SetPedPromptName(horse, horseData.name)
-            Citizen.InvokeNative(0x5653AB26C82938CF, horse, 41611, horseData.gender == 'male' and 0.0 or 1.0)
-            NtHorseAppearance.Apply(horse, horseData.appearance, false)
-            Citizen.InvokeNative(0x5DA12E025D47D4E5, horse, 16, tonumber(horseData.dirt) or 0)
-        end)
-    end)
-end
-
 local function DriveWagonToPlayer()
     wagonDriveId = wagonDriveId + 1
     local currentDriveId = wagonDriveId
@@ -149,8 +112,6 @@ local function SpawnWagonHorses(wagon, wagonData)
                         slot
                     ))
                 end
-                Citizen.InvokeNative(0x5DA12E025D47D4E5, horse, 16, tonumber(horseData.dirt) or 0)
-                SyncWagonHorseAppearance(wagon, slot, horseData)
             else
                 print(('Nt_Stables: wagon %s did not create a horse in slot %d for %s.'):format(
                     tostring(wagonData.model),
@@ -191,8 +152,6 @@ local function ApplyWagonCustomization(wagon, wagonData)
     if wagonData.extras then
         local success, storedExtras = pcall(json.decode, wagonData.extras)
         if success and type(storedExtras) == 'table' then enabledExtras = storedExtras end
-    elseif tonumber(wagonData.extra) and tonumber(wagonData.extra) > 0 then
-        enabledExtras[1] = tonumber(wagonData.extra)
     end
     for _, extra in ipairs(enabledExtras) do
         if DoesExtraExist(wagon, extra) then
@@ -260,15 +219,16 @@ local function DeletePlayerWagon()
     local wagon = PlayerWagon
     if wagon == 0 then return end
 
+    WagonSync.Remove(wagon)
+
     if activeWagonContext and PlayerWagonData and activeWagonContext.wagon == wagon
         and DoesEntityExist(wagon) and IsEntityDead(wagon) then
         activeWagonContext.destroyed = true
-        TriggerServerEvent('nt_stables:server:destroyWagon', PlayerWagonData.id)
     end
     if activeWagonContext then activeWagonContext.isSpawned = false end
 
     if activeWagonContext and activeWagonContext.destroyed and PlayerWagonData then
-        TriggerServerEvent('nt_stables:server:despawnDestroyedWagon', PlayerWagonData.id)
+        TriggerServerEvent('nt_stables:server:wagonDestroyed', PlayerWagonData.id)
     end
     RemoveWagonTarget(wagon)
     wagonDriveId = wagonDriveId + 1
@@ -290,18 +250,8 @@ local function DeletePlayerWagon()
         if horseState and horseState.entity == horse then
             if DoesEntityExist(horse) then horseState.dead = IsEntityDead(horse) end
             horseState.isSpawned = false
-            if activeWagonContext and activeWagonContext.destroyed and not horseState.dead then
-                TriggerServerEvent('nt_stables:server:releaseWagonHorse', PlayerWagonData.id, horseData.id)
-            end
-            if horseState.dead and not horseState.deathPending then
-                horseState.deathPending = true
-                TriggerServerEvent('nt_stables:server:beginHorseDeath', horseData.id)
-            end
-            if horseState.deathPending then
-                TriggerServerEvent(
-                    horseState.dead and 'nt_stables:server:finishHorseDeath' or 'nt_stables:server:cancelHorseDeath',
-                    horseData.id
-                )
+            if horseState.dead then
+                TriggerServerEvent('nt_stables:server:horseFailedRevive', horseData.id)
             end
             state.horse[horseData.id] = nil
         end
@@ -366,7 +316,6 @@ local function StartWagonHorseMonitor(horse, horseData, context)
                 local reviveDeadline = GetGameTimer() + ConfigStables.Settings.HorseReviveTime
                 local tenSecondWarning = false
                 horseState.deathPending = true
-                TriggerServerEvent('nt_stables:server:beginHorseDeath', horseData.id)
                 lib.notify({
                     title = horseData.name .. ' has died.',
                     description = 'Use a horse reviver within 3 minutes.',
@@ -399,12 +348,10 @@ local function StartWagonHorseMonitor(horse, horseData, context)
                 if horseState.isSpawned and DoesEntityExist(horse) and not IsEntityDead(horse) then
                     horseState.dead = false
                     horseState.deathPending = false
-                    TriggerServerEvent('nt_stables:server:cancelHorseDeath', horseData.id)
                     SetEntityHealth(horse, GetEntityMaxHealth(horse))
                     SetBlockingOfNonTemporaryEvents(horse, false)
 
                     if context.destroyed or not DoesEntityExist(context.wagon) or IsEntityDead(context.wagon) then
-                        TriggerServerEvent('nt_stables:server:releaseWagonHorse', context.wagonId, horseData.id)
                         if NetworkGetEntityIsNetworked(horse) then
                             SetNetworkIdExistsOnAllMachines(NetworkGetNetworkIdFromEntity(horse), false)
                         end
@@ -444,14 +391,13 @@ local function StartWagonHorseMonitor(horse, horseData, context)
                 else
                     horseState.isSpawned = false
                     if horseState.dead and horseState.deathPending then
-                        TriggerServerEvent('nt_stables:server:finishHorseDeath', horseData.id)
+                        TriggerServerEvent('nt_stables:server:horseFailedRevive', horseData.id)
                     end
                     if state.horse[horseData.id] == horseState then state.horse[horseData.id] = nil end
                     PlayerWagonHorses[horse] = nil
                     return
                 end
             elseif context.destroyed then
-                TriggerServerEvent('nt_stables:server:releaseWagonHorse', context.wagonId, horseData.id)
                 if DoesEntityExist(context.wagon) then
                     Citizen.InvokeNative(0x4402960666000E62, context.wagon, tonumber(horseData.slot) - 1)
                 end
@@ -466,14 +412,8 @@ local function StartWagonHorseMonitor(horse, horseData, context)
 
         if state.horse[horseData.id] == horseState then
             horseState.isSpawned = false
-            if horseState.detached and not horseState.dead then
-                TriggerServerEvent('nt_stables:server:releaseWagonHorse', context.wagonId, horseData.id)
-            end
-            if horseState.deathPending then
-                TriggerServerEvent(
-                    horseState.dead and 'nt_stables:server:finishHorseDeath' or 'nt_stables:server:cancelHorseDeath',
-                    horseData.id
-                )
+            if horseState.dead and horseState.deathPending then
+                TriggerServerEvent('nt_stables:server:horseFailedRevive', horseData.id)
             end
             state.horse[horseData.id] = nil
         end
@@ -484,7 +424,7 @@ local function ReleaseDestroyedWagon(wagon, wagonData, context)
     if context.destroyed then return end
     context.destroyed = true
 
-    TriggerServerEvent('nt_stables:server:destroyWagon', wagonData.id)
+    WagonSync.Remove(wagon)
 
     wagonDriveId = wagonDriveId + 1
 
@@ -520,7 +460,7 @@ local function StartWagonMonitor(wagon, wagonData, context)
 
         if wagonMonitorId == monitorId and PlayerWagon == wagon and state.wagon[wagonData.id] == context then
             if context.destroyed then
-                TriggerServerEvent('nt_stables:server:despawnDestroyedWagon', wagonData.id)
+                TriggerServerEvent('nt_stables:server:wagonDestroyed', wagonData.id)
                 state.wagon[wagonData.id] = nil
                 ClearPlayerWagonState(wagon)
                 activeWagonContext = nil
@@ -619,18 +559,10 @@ HitchWagonHorses = function(wagon, wagonData)
         if horseState and horseState.entity == horse then
             if DoesEntityExist(horse) then horseState.dead = IsEntityDead(horse) end
             horseState.isSpawned = false
-            if horseState.dead and not horseState.deathPending then
-                horseState.deathPending = true
-                TriggerServerEvent('nt_stables:server:beginHorseDeath', horseData.id)
-            end
-            if horseState.dead and horseState.deathPending then
-                TriggerServerEvent('nt_stables:server:finishHorseDeath', horseData.id)
+            if horseState.dead then
+                TriggerServerEvent('nt_stables:server:horseFailedRevive', horseData.id)
                 state.horse[horseData.id] = nil
             else
-                if horseState.deathPending then
-                    horseState.deathPending = false
-                    TriggerServerEvent('nt_stables:server:cancelHorseDeath', horseData.id)
-                end
                 state.horse[horseData.id] = nil
             end
         end
@@ -650,6 +582,7 @@ HitchWagonHorses = function(wagon, wagonData)
     PlayerWagonHorses = {}
 
     if state.wagon[wagonData.id] == activeWagonContext then state.wagon[wagonData.id] = nil end
+    WagonSync.Remove(wagon)
     SetEntityAsMissionEntity(wagon, true, true)
     DeleteVehicle(wagon)
     if DoesEntityExist(wagon) then DeleteEntity(wagon) end
@@ -687,6 +620,7 @@ HitchWagonHorses = function(wagon, wagonData)
     local attachedCount = SpawnWagonHorses(PlayerWagon, hitchWagonData)
     ApplyWagonCustomization(PlayerWagon, wagonData)
     SetVehicleDirtLevel(PlayerWagon, 0.0)
+    WagonSync.Register(PlayerWagon, wagonData.id)
 
     wagonBlip = Citizen.InvokeNative(0x23F74C2FDA6E7C61, -1230993421, PlayerWagon)
     SetBlipSprite(wagonBlip, joaat('blip_player_coach'), true)
@@ -784,6 +718,7 @@ local function CallPlayerWagon()
     end
     ApplyWagonCustomization(PlayerWagon, wagonData)
     SetVehicleDirtLevel(PlayerWagon, 0.0)
+    WagonSync.Register(PlayerWagon, wagonData.id)
 
     wagonBlip = Citizen.InvokeNative(0x23F74C2FDA6E7C61, -1230993421, PlayerWagon)
     SetBlipSprite(wagonBlip, joaat('blip_player_coach'), true)

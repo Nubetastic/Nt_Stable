@@ -6,46 +6,6 @@ local wildHorseRegistrationLocks = {}
 local wildHorsePlayerLocks = {}
 local trainingAwards = {}
 local horseCareCooldowns = {}
-local pendingHorseDeaths = {}
-local destroyedWagons = {}
-
-CreateThread(function()
-    MySQL.query.await([[
-        CREATE TABLE IF NOT EXISTS `nt_stable_wagon_horses` (
-            `wagon_id` INT NOT NULL,
-            `slot` TINYINT UNSIGNED NOT NULL,
-            `horse_id` INT NOT NULL,
-            `citizenid` VARCHAR(50) NOT NULL,
-            PRIMARY KEY (`wagon_id`, `slot`),
-            UNIQUE KEY `wagon_horse` (`wagon_id`, `horse_id`),
-            KEY `horse_id` (`horse_id`),
-            KEY `citizenid` (`citizenid`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ]])
-    if not MySQL.single.await("SHOW COLUMNS FROM `wagonmaker_wagons` LIKE 'lantern'") then
-        MySQL.query.await("ALTER TABLE `wagonmaker_wagons` ADD COLUMN `lantern` VARCHAR(100) NOT NULL DEFAULT '0'")
-    end
-    if not MySQL.single.await("SHOW COLUMNS FROM `wagonmaker_wagons` LIKE 'extras'") then
-        MySQL.query.await("ALTER TABLE `wagonmaker_wagons` ADD COLUMN `extras` TEXT NULL")
-    end
-    if not MySQL.single.await("SHOW COLUMNS FROM `wagonmaker_wagons` LIKE 'needs_repair'") then
-        MySQL.query.await("ALTER TABLE `wagonmaker_wagons` ADD COLUMN `needs_repair` TINYINT(1) NOT NULL DEFAULT 0")
-    end
-    local wagonNameColumn = MySQL.single.await("SHOW COLUMNS FROM `wagonmaker_wagons` LIKE 'name'")
-    local wagonNameLength = wagonNameColumn and tonumber(wagonNameColumn.Type:match('%((%d+)%)')) or 0
-    if wagonNameLength < 100 then
-        MySQL.query.await("ALTER TABLE `wagonmaker_wagons` MODIFY COLUMN `name` VARCHAR(100) NOT NULL")
-    end
-    if not MySQL.single.await("SHOW COLUMNS FROM `player_horses` LIKE 'wild'") then
-        MySQL.query.await("ALTER TABLE `player_horses` ADD COLUMN `wild` TINYINT(1) NOT NULL DEFAULT 0")
-    end
-    if not MySQL.single.await("SHOW COLUMNS FROM `player_horses` LIKE 'stat_modifiers'") then
-        MySQL.query.await("ALTER TABLE `player_horses` ADD COLUMN `stat_modifiers` LONGTEXT NULL")
-    end
-    if not MySQL.single.await("SHOW COLUMNS FROM `player_horses` LIKE 'appearance'") then
-        MySQL.query.await("ALTER TABLE `player_horses` ADD COLUMN `appearance` LONGTEXT NULL")
-    end
-end)
 
 local function IncludesValue(values, selectedValue)
     for _, value in ipairs(values or {}) do
@@ -84,6 +44,7 @@ local function ValidateComponents(components)
 
     local allowedCategories = {}
     local allowedTintKeys = {}
+    local allowedCustomizationKeys = { ManeCustomized = true, TailCustomized = true }
     for _, category in ipairs(ConfigStables.Customization) do
         allowedCategories[category.key] = true
         allowedTintKeys[category.tintKey] = true
@@ -91,7 +52,10 @@ local function ValidateComponents(components)
 
     local validated = {}
     for category, value in pairs(components) do
-        if allowedTintKeys[category] then
+        if allowedCustomizationKeys[category] then
+            if value ~= true then return end
+            validated[category] = true
+        elseif allowedTintKeys[category] then
             if type(value) ~= 'table' then return end
 
             local tint0 = tonumber(value.tint0)
@@ -167,14 +131,6 @@ local function ValidateAppearance(appearance)
     return validated
 end
 
-local function GenerateHorseId()
-    while true do
-        local horseId = tostring(RSGCore.Shared.RandomStr(3) .. RSGCore.Shared.RandomInt(3)):upper()
-        local exists = MySQL.scalar.await('SELECT COUNT(*) FROM player_horses WHERE horseid = ?', { horseId })
-        if exists == 0 then return horseId end
-    end
-end
-
 local function GetStableSlots(Player)
     local storedSlots = Player.PlayerData.metadata.stable_slots
 
@@ -202,8 +158,14 @@ local function IsNearStable(source, stableName)
     return #(GetEntityCoords(GetPlayerPed(source)) - stable.RegisterCoords) < ConfigStables.WildHorseRegistration.OpenDistance
 end
 
+local function IsNearStableNpc(source, stableName)
+    local stable = ConfigStables.Locations[stableName]
+    if not stable or not stable.npcCoords then return false end
+    return #(GetEntityCoords(GetPlayerPed(source)) - stable.npcCoords) < ConfigStables.Settings.ZoneDistance
+end
+
 local function GetWildHorseRegistrationCosts(Player)
-    local horseCount = MySQL.scalar.await('SELECT COUNT(*) FROM player_horses WHERE citizenid = ?', {
+    local horseCount = MySQL.scalar.await("SELECT COUNT(*) FROM nt_stable_horses WHERE citizenid = ? AND location = 'stable'", {
         Player.PlayerData.citizenid,
     })
     local slots = GetStableSlots(Player)
@@ -272,7 +234,7 @@ end
 local function GetWagonHorseAssignments(citizenid)
     local assignments = MySQL.query.await([[SELECT assignments.wagon_id, assignments.slot,
         horses.* FROM nt_stable_wagon_horses assignments
-        INNER JOIN player_horses horses ON horses.id = assignments.horse_id
+        INNER JOIN nt_stable_horses horses ON horses.id = assignments.horse_id
         WHERE assignments.citizenid = ? AND horses.citizenid = ?
         ORDER BY assignments.wagon_id, assignments.slot]], { citizenid, citizenid })
     local wagonHorses = {}
@@ -293,26 +255,13 @@ local function WagonHasRequiredHorses(citizenid, wagon)
     if not wagonConfig then return false end
 
     local assigned = MySQL.scalar.await([[SELECT COUNT(*) FROM nt_stable_wagon_horses assignments
-        INNER JOIN player_horses horses ON horses.id = assignments.horse_id
+        INNER JOIN nt_stable_horses horses ON horses.id = assignments.horse_id
         WHERE assignments.wagon_id = ? AND assignments.citizenid = ? AND horses.citizenid = ?]], {
         wagon.id,
         citizenid,
         citizenid,
     })
     return tonumber(assigned) == wagonConfig.horseCount
-end
-
-local function WagonHasPendingHorseDeath(source, citizenid, wagonId)
-    if not pendingHorseDeaths[source] or not next(pendingHorseDeaths[source]) then return false end
-
-    local assignedHorses = MySQL.query.await('SELECT horse_id FROM nt_stable_wagon_horses WHERE wagon_id = ? AND citizenid = ?', {
-        wagonId,
-        citizenid,
-    })
-    for _, assignedHorse in ipairs(assignedHorses) do
-        if pendingHorseDeaths[source][tonumber(assignedHorse.horse_id)] then return true end
-    end
-    return false
 end
 
 local function GetStableInventoryId(citizenid)
@@ -389,16 +338,18 @@ local function GetHorseCarryWeight(horse)
     return stats and HorseStats.GetCarryWeight(stats.strength) * 1000 or 0
 end
 
-local function GetWagonInventoryMaxWeight(citizenid, wagonId, model)
+local function GetWagonInventoryMaxWeight(citizenid, wagonId, model, excludedHorseId)
     local wagonConfig = ConfigWagon.Wagons[model]
     if not wagonConfig then return 0 end
 
     local horses = MySQL.query.await([[SELECT horses.* FROM nt_stable_wagon_horses assignments
-        INNER JOIN player_horses horses ON horses.id = assignments.horse_id
-        WHERE assignments.wagon_id = ? AND assignments.citizenid = ? AND horses.citizenid = ?]], {
+        INNER JOIN nt_stable_horses horses ON horses.id = assignments.horse_id
+        WHERE assignments.wagon_id = ? AND assignments.citizenid = ? AND horses.citizenid = ?
+            AND horses.id <> ?]], {
         wagonId,
         citizenid,
         citizenid,
+        tonumber(excludedHorseId) or 0,
     })
     local pullWeight = 0
     for _, horse in ipairs(horses) do
@@ -440,7 +391,7 @@ local function GetStableInventoryTransferData(Player)
     end
 
     local horseDestination
-    local horse = MySQL.single.await('SELECT * FROM player_horses WHERE citizenid = ? AND active = ?', { citizenid, 1 })
+    local horse = MySQL.single.await('SELECT * FROM nt_stable_horses WHERE citizenid = ? AND active = ?', { citizenid, 1 })
     if horse then
         horseDestination = GetDestination('horse_saddlebag_' .. citizenid, horse.name .. ' Saddlebag',
             GetHorseCarryWeight(horse), ConfigStables.Settings.SaddleBagSlots)
@@ -449,7 +400,7 @@ local function GetStableInventoryTransferData(Player)
     local wagonDestination
     local wagonId = GetActiveWagonId(Player)
     if wagonId then
-        local wagon = MySQL.single.await('SELECT id, model, name, needs_repair FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', { wagonId, citizenid })
+        local wagon = MySQL.single.await('SELECT id, model, name, needs_repair FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', { wagonId, citizenid })
         if wagon and wagon.needs_repair ~= 1 and wagon.needs_repair ~= true and ConfigWagon.Wagons[wagon.model] then
             wagonDestination = GetDestination('wagon_' .. wagon.id, wagon.name .. ' Storage',
                 GetWagonInventoryMaxWeight(citizenid, wagon.id, wagon.model), ConfigWagon.Wagons[wagon.model].slots)
@@ -462,14 +413,14 @@ local function GetStableInventoryTransferData(Player)
     }
 end
 
-local function MoveWagonToStableIfOver(Player, wagonId, model)
+local function MoveWagonToStableIfOver(Player, wagonId, model, excludedHorseId)
     local identifier = 'wagon_' .. wagonId
     exports['rsg-inventory']:CreateInventory(identifier, {
         maxweight = ConfigWagon.Wagons[model].maxWeight,
         slots = ConfigWagon.Wagons[model].slots,
     })
     local inventory = exports['rsg-inventory']:GetInventory(identifier)
-    local maxWeight = GetWagonInventoryMaxWeight(Player.PlayerData.citizenid, wagonId, model)
+    local maxWeight = GetWagonInventoryMaxWeight(Player.PlayerData.citizenid, wagonId, model, excludedHorseId)
     if exports['rsg-inventory']:GetTotalWeight(inventory.items) <= maxWeight then return true end
     return MoveInventoryToStable(Player, identifier, 'Wagon cargo')
 end
@@ -478,7 +429,7 @@ local function ClearIncompleteActiveWagon(Player)
     local wagonId = GetActiveWagonId(Player)
     if not wagonId then return false end
 
-    local wagon = MySQL.single.await('SELECT id, model, needs_repair FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
+    local wagon = MySQL.single.await('SELECT id, model, needs_repair FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', {
         wagonId,
         Player.PlayerData.citizenid,
     })
@@ -493,15 +444,11 @@ exports('PrepareHorseForAuction', function(source, horseId)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
 
-    local horse = MySQL.single.await('SELECT * FROM player_horses WHERE id = ? AND citizenid = ?', {
+    local horse = MySQL.single.await("SELECT * FROM nt_stable_horses WHERE id = ? AND citizenid = ? AND location = 'stable'", {
         horseId,
         Player.PlayerData.citizenid,
     })
     if not horse then return { success = false, message = 'Horse not found.' } end
-    if pendingHorseDeaths[source] and pendingHorseDeaths[source][tonumber(horseId)] then
-        return { success = false, message = 'This horse cannot be listed while its death is pending.' }
-    end
-
     local wasActive = horse.active == 1 or horse.active == true
     if wasActive and not MoveInventoryToStable(Player, 'horse_saddlebag_' .. Player.PlayerData.citizenid, 'Horse saddlebag') then
         return { success = false, message = 'The saddlebag could not be moved to stable storage.' }
@@ -509,32 +456,38 @@ exports('PrepareHorseForAuction', function(source, horseId)
 
     local affectedWagons = MySQL.query.await([[SELECT wagons.id, wagons.model
         FROM nt_stable_wagon_horses assignments
-        INNER JOIN wagonmaker_wagons wagons ON wagons.id = assignments.wagon_id
+        INNER JOIN nt_stable_wagons wagons ON wagons.id = assignments.wagon_id
         WHERE assignments.horse_id = ? AND assignments.citizenid = ? AND wagons.citizenid = ?]], {
         horseId,
         Player.PlayerData.citizenid,
         Player.PlayerData.citizenid,
     })
-    MySQL.update.await('DELETE FROM nt_stable_wagon_horses WHERE horse_id = ? AND citizenid = ?', {
-        horseId,
-        Player.PlayerData.citizenid,
-    })
     for _, wagon in ipairs(affectedWagons) do
-        if not MoveWagonToStableIfOver(Player, tonumber(wagon.id), wagon.model) then
+        if not MoveWagonToStableIfOver(Player, tonumber(wagon.id), wagon.model, horseId) then
             return { success = false, message = 'The wagon cargo could not be moved to stable storage.' }
         end
     end
 
     if wasActive then Player.Functions.SetMetaData('stable_active_horse', false) end
-    local clearedWagon = ClearIncompleteActiveWagon(Player)
+    local clearedWagon = false
+    local activeWagonId = GetActiveWagonId(Player)
+    for _, wagon in ipairs(affectedWagons) do
+        if tonumber(wagon.id) == activeWagonId then
+            Player.Functions.SetMetaData('stable_active_wagon', false)
+            clearedWagon = true
+            break
+        end
+    end
     return { success = true, wasActive = wasActive, clearedWagon = clearedWagon }
 end)
 
+local GetSellPrice
+
 local function GetStableManagerData(Player, slots)
-    local horses = MySQL.query.await('SELECT * FROM player_horses WHERE citizenid = ? ORDER BY active DESC, name ASC', {
+    local horses = MySQL.query.await("SELECT * FROM nt_stable_horses WHERE citizenid = ? AND location = 'stable' ORDER BY active DESC, name ASC", {
         Player.PlayerData.citizenid,
     })
-    local wagons = MySQL.query.await('SELECT * FROM wagonmaker_wagons WHERE citizenid = ? ORDER BY name ASC', {
+    local wagons = MySQL.query.await('SELECT * FROM nt_stable_wagons WHERE citizenid = ? ORDER BY name ASC', {
         Player.PlayerData.citizenid,
     })
     ClearIncompleteActiveWagon(Player)
@@ -545,9 +498,11 @@ local function GetStableManagerData(Player, slots)
         wagon.active = activeWagonId == tonumber(wagon.id)
         wagon.ready = #wagon.horses == ConfigWagon.Wagons[wagon.model].horseCount
         wagon.repairPrice = math.floor(((ConfigWagon.Wagons[wagon.model].price * ConfigWagon.Prices.repair) * 100) + 0.5) / 100
+        wagon.sellPrice = math.floor((ConfigWagon.Wagons[wagon.model].price * Config.StableSlots.SellPriceMultiplier) + 0.5)
     end
     for _, horse in ipairs(horses) do
         horse.isWagonHorse = assignedHorses[tonumber(horse.id)] == true
+        horse.sellPrice = GetSellPrice(horse)
     end
     slots = slots or GetStableSlots(Player)
 
@@ -593,7 +548,7 @@ local function GetTrainingLevel(xp)
     return 10
 end
 
-local function GetSellPrice(horse)
+GetSellPrice = function(horse)
     local stats = HorseStats.Get(horse.horse)
     if not stats or not stats.price then return end
 
@@ -627,36 +582,37 @@ local function GetSellPrice(horse)
     return math.floor(((shopPrice * 0.50) + (level * shopPrice * ConfigStables.Settings.SellPricePerLevel)) + 0.5)
 end
 
-lib.callback.register('nt_stables:server:getActiveHorse', function(source)
+RegisterSqlCallback('nt_stables:server:getActiveHorse', function(source)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return end
 
-    return MySQL.single.await('SELECT * FROM player_horses WHERE citizenid = ? AND active = ?', {
+    return MySQL.single.await("SELECT * FROM nt_stable_horses WHERE citizenid = ? AND active = ? AND location = 'stable'", {
         Player.PlayerData.citizenid,
         1,
     })
 end)
 
-lib.callback.register('nt_stables:server:getPlayerHorses', function(source)
+RegisterSqlCallback('nt_stables:server:getPlayerHorses', function(source)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return end
 
-    return MySQL.query.await('SELECT * FROM player_horses WHERE citizenid = ? ORDER BY active DESC, name ASC', {
+    return MySQL.query.await("SELECT * FROM nt_stable_horses WHERE citizenid = ? AND location = 'stable' ORDER BY active DESC, name ASC", {
         Player.PlayerData.citizenid,
     })
 end)
 
-lib.callback.register('nt_stables:server:getMissingHorseAppearances', function(source)
+RegisterSqlCallback('nt_stables:server:getMissingHorseAppearances', function(source)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return {} end
 
-    return MySQL.query.await([[SELECT id, horse, gender, components, appearance FROM player_horses
-        WHERE citizenid = ? AND (appearance IS NULL OR appearance = '' OR appearance NOT LIKE '%"version":3%') ORDER BY id]], {
+    return MySQL.query.await([[SELECT id, horse, gender, components, appearance FROM nt_stable_horses
+        WHERE citizenid = ? AND location = 'stable'
+            AND (appearance IS NULL OR appearance = '' OR appearance NOT LIKE '%"version":3%') ORDER BY id]], {
         Player.PlayerData.citizenid,
     })
 end)
 
-lib.callback.register('nt_stables:server:saveHorseAppearance', function(source, horseId, appearance)
+RegisterSqlCallback('nt_stables:server:saveHorseAppearance', function(source, horseId, appearance)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return false end
 
@@ -664,7 +620,7 @@ lib.callback.register('nt_stables:server:saveHorseAppearance', function(source, 
     local validAppearance = ValidateAppearance(appearance)
     if not horseId or not validAppearance then return false end
 
-    local updated = MySQL.update.await('UPDATE player_horses SET appearance = ? WHERE id = ? AND citizenid = ?', {
+    local updated = MySQL.update.await("UPDATE nt_stable_horses SET appearance = ? WHERE id = ? AND citizenid = ? AND location = 'stable'", {
         json.encode(validAppearance),
         horseId,
         Player.PlayerData.citizenid,
@@ -672,7 +628,7 @@ lib.callback.register('nt_stables:server:saveHorseAppearance', function(source, 
     return updated and updated > 0
 end)
 
-lib.callback.register('nt_stables:server:getWildHorseRegistrationQuote', function(source, stableName)
+RegisterSqlCallback('nt_stables:server:getWildHorseRegistrationQuote', function(source, stableName)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
     if not IsNearStable(source, stableName) then
@@ -689,7 +645,7 @@ lib.callback.register('nt_stables:server:getWildHorseRegistrationQuote', functio
     }
 end)
 
-lib.callback.register('nt_stables:server:registerWildHorse', function(source, data)
+RegisterSqlCallback('nt_stables:server:registerWildHorse', function(source, data)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player or type(data) ~= 'table' then
         return { success = false, message = 'Player not found.' }
@@ -705,9 +661,7 @@ lib.callback.register('nt_stables:server:registerWildHorse', function(source, da
     if name == '' or #name > 32 or name:find("[^%w%s%-']") then
         return { success = false, message = 'Horse names must contain 1 to 32 valid characters.' }
     end
-    if data.gender ~= 'male' and data.gender ~= 'female' then
-        return { success = false, message = 'The horse gender is invalid.' }
-    end
+    data.gender = data.gender == 'female' and 'female' or 'male'
     if not HorseStats.Exists(data.model) then
         return { success = false, message = 'That horse model cannot be registered.' }
     end
@@ -731,6 +685,10 @@ lib.callback.register('nt_stables:server:registerWildHorse', function(source, da
     if not statModifiers then
         return { success = false, message = 'The wild horse stats could not be read.' }
     end
+    local appearance = ValidateAppearance(data.appearance)
+    if not appearance then
+        return { success = false, message = 'The wild horse appearance could not be captured.' }
+    end
 
     wildHorseRegistrationLocks[networkId] = horse
     wildHorsePlayerLocks[source] = true
@@ -742,21 +700,22 @@ lib.callback.register('nt_stables:server:registerWildHorse', function(source, da
         return { success = false, message = ('You need $%.2f to register this horse.'):format(costs.total) }
     end
 
-    local databaseId = MySQL.insert.await([[INSERT INTO player_horses
-        (stable, citizenid, horseid, name, horse, dirt, horsexp, components, gender, wild, stat_modifiers, active, born)
-        VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, 1, ?, 0, ?)]], {
-        data.stable,
+    local databaseId, publicId = ReserveStableEntityId(Player.PlayerData.citizenid, 'H')
+    local inserted = databaseId and MySQL.insert.await([[INSERT INTO nt_stable_horses
+        (id, horseid, citizenid, name, horse, horsexp, components, gender, wild, stat_modifiers, appearance, active, location)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, 0, 'stable')]], {
+        databaseId,
+        publicId,
         Player.PlayerData.citizenid,
-        GenerateHorseId(),
         name,
         data.model,
         json.encode({}),
         data.gender,
         json.encode(statModifiers),
-        os.time(),
+        json.encode(appearance),
     })
 
-    if not databaseId then
+    if not inserted then
         Player.Functions.AddMoney(Config.StableSlots.MoneyType, costs.total)
         wildHorseRegistrationLocks[networkId] = nil
         wildHorsePlayerLocks[source] = nil
@@ -788,14 +747,14 @@ CreateThread(function()
     end
 end)
 
-lib.callback.register('nt_stables:server:getStableManagerData', function(source)
+RegisterSqlCallback('nt_stables:server:getStableManagerData', function(source)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return end
 
     return GetStableManagerData(Player)
 end)
 
-lib.callback.register('nt_stables:server:changeStableSlots', function(source, slotType, action)
+RegisterSqlCallback('nt_stables:server:changeStableSlots', function(source, slotType, action)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
     if slotType ~= 'horse' and slotType ~= 'wagon' then
@@ -805,8 +764,8 @@ lib.callback.register('nt_stables:server:changeStableSlots', function(source, sl
     local slots = GetStableSlots(Player)
     local slotConfig = slotType == 'horse' and Config.StableSlots.Horse or Config.StableSlots.Wagon
     local owned = MySQL.scalar.await(slotType == 'horse'
-        and 'SELECT COUNT(*) FROM player_horses WHERE citizenid = ?'
-        or 'SELECT COUNT(*) FROM wagonmaker_wagons WHERE citizenid = ?', {
+        and "SELECT COUNT(*) FROM nt_stable_horses WHERE citizenid = ? AND location = 'stable'"
+        or 'SELECT COUNT(*) FROM nt_stable_wagons WHERE citizenid = ?', {
         Player.PlayerData.citizenid,
     })
 
@@ -844,11 +803,11 @@ lib.callback.register('nt_stables:server:changeStableSlots', function(source, sl
     return data
 end)
 
-lib.callback.register('nt_stables:server:setRidingHorse', function(source, horseId)
+RegisterSqlCallback('nt_stables:server:setRidingHorse', function(source, horseId)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return false end
 
-    local horse = MySQL.single.await('SELECT * FROM player_horses WHERE id = ? AND citizenid = ?', {
+    local horse = MySQL.single.await("SELECT * FROM nt_stable_horses WHERE id = ? AND citizenid = ? AND location = 'stable'", {
         horseId,
         Player.PlayerData.citizenid,
     })
@@ -869,7 +828,7 @@ lib.callback.register('nt_stables:server:setRidingHorse', function(source, horse
 
     local affectedWagons = MySQL.query.await([[SELECT wagons.id, wagons.model
         FROM nt_stable_wagon_horses assignments
-        INNER JOIN wagonmaker_wagons wagons ON wagons.id = assignments.wagon_id
+        INNER JOIN nt_stable_wagons wagons ON wagons.id = assignments.wagon_id
         WHERE assignments.horse_id = ? AND assignments.citizenid = ? AND wagons.citizenid = ?]], {
         horseId,
         Player.PlayerData.citizenid,
@@ -884,31 +843,28 @@ lib.callback.register('nt_stables:server:setRidingHorse', function(source, horse
         MoveWagonToStableIfOver(Player, tonumber(wagon.id), wagon.model)
     end
     local clearedWagon = ClearIncompleteActiveWagon(Player)
-    MySQL.update.await('UPDATE player_horses SET active = 0 WHERE citizenid = ?', { Player.PlayerData.citizenid })
-    MySQL.update.await('UPDATE player_horses SET active = 1 WHERE id = ? AND citizenid = ?', {
+    MySQL.update.await('UPDATE nt_stable_horses SET active = 0 WHERE citizenid = ?', { Player.PlayerData.citizenid })
+    MySQL.update.await('UPDATE nt_stable_horses SET active = 1 WHERE id = ? AND citizenid = ?', {
         horseId,
         Player.PlayerData.citizenid,
     })
     return { success = true, clearedWagon = clearedWagon }
 end)
 
-lib.callback.register('nt_stables:server:setRidingWagon', function(source, wagonId)
+RegisterSqlCallback('nt_stables:server:setRidingWagon', function(source, wagonId)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return false end
 
     wagonId = tonumber(wagonId)
     if not wagonId then return false end
 
-    local wagon = MySQL.single.await('SELECT id, model, needs_repair FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
+    local wagon = MySQL.single.await('SELECT id, model, needs_repair FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', {
         wagonId,
         Player.PlayerData.citizenid,
     })
     if not wagon then return { success = false, message = 'Wagon not found.' } end
     if wagon.needs_repair == 1 or wagon.needs_repair == true then
         return { success = false, message = 'Repair this wagon before setting it active.' }
-    end
-    if WagonHasPendingHorseDeath(source, Player.PlayerData.citizenid, wagonId) then
-        return { success = false, message = 'Wait for the wagon horses to finish their revive period.' }
     end
     if not WagonHasRequiredHorses(Player.PlayerData.citizenid, wagon) then
         return { success = false, message = 'Assign a horse to every wagon slot before setting it active.' }
@@ -918,15 +874,11 @@ lib.callback.register('nt_stables:server:setRidingWagon', function(source, wagon
     return { success = true }
 end)
 
-lib.callback.register('nt_stables:server:repairWagon', function(source, wagonId)
+RegisterSqlCallback('nt_stables:server:repairWagon', function(source, wagonId)
     local Player = RSGCore.Functions.GetPlayer(source)
     wagonId = tonumber(wagonId)
     if not Player or not wagonId then return { success = false, message = 'Wagon not found.' } end
-    if destroyedWagons[source] and destroyedWagons[source][wagonId] then
-        return { success = false, message = 'The destroyed wagon must despawn before it can be repaired.' }
-    end
-
-    local wagon = MySQL.single.await('SELECT id, model, needs_repair FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
+    local wagon = MySQL.single.await('SELECT id, model, needs_repair FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', {
         wagonId,
         Player.PlayerData.citizenid,
     })
@@ -934,9 +886,6 @@ lib.callback.register('nt_stables:server:repairWagon', function(source, wagonId)
     if not wagonConfig then return { success = false, message = 'Wagon not found.' } end
     if wagon.needs_repair ~= 1 and wagon.needs_repair ~= true then
         return { success = false, message = 'This wagon does not need repairs.' }
-    end
-    if WagonHasPendingHorseDeath(source, Player.PlayerData.citizenid, wagonId) then
-        return { success = false, message = 'Wait for the wagon horses to finish their revive period.' }
     end
 
     local price = math.floor(((wagonConfig.price * ConfigWagon.Prices.repair) * 100) + 0.5) / 100
@@ -949,7 +898,7 @@ lib.callback.register('nt_stables:server:repairWagon', function(source, wagonId)
         return { success = false, message = 'The wagon cargo could not be moved to stable storage.' }
     end
 
-    local updated = MySQL.update.await('UPDATE wagonmaker_wagons SET needs_repair = 0 WHERE id = ? AND citizenid = ? AND needs_repair = 1', {
+    local updated = MySQL.update.await('UPDATE nt_stable_wagons SET needs_repair = 0 WHERE id = ? AND citizenid = ? AND needs_repair = 1', {
         wagonId,
         Player.PlayerData.citizenid,
     })
@@ -958,25 +907,31 @@ lib.callback.register('nt_stables:server:repairWagon', function(source, wagonId)
         return { success = false, message = 'Unable to repair this wagon.' }
     end
 
-    return { success = true, price = price }
+    return {
+        success = true,
+        price = price,
+        customizations = {
+            livery = customization.livery,
+            tint = customization.tint,
+            extras = json.encode(customization.extras),
+            lantern = customization.lantern,
+        },
+    }
 end)
 
-lib.callback.register('nt_stables:server:getActiveStableRideType', function(source)
+RegisterSqlCallback('nt_stables:server:getActiveStableRideType', function(source)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return 'horse' end
     return GetActiveWagonId(Player) and 'wagon' or 'horse'
 end)
 
-lib.callback.register('nt_stables:server:getActiveWagon', function(source)
+RegisterSqlCallback('nt_stables:server:getActiveWagon', function(source)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return end
 
     local wagonId = GetActiveWagonId(Player)
     if not wagonId then return end
-    if destroyedWagons[source] and destroyedWagons[source][wagonId] then return end
-    if WagonHasPendingHorseDeath(source, Player.PlayerData.citizenid, wagonId) then return end
-
-    local wagon = MySQL.single.await('SELECT * FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
+    local wagon = MySQL.single.await('SELECT * FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', {
         wagonId,
         Player.PlayerData.citizenid,
     })
@@ -991,83 +946,102 @@ lib.callback.register('nt_stables:server:getActiveWagon', function(source)
     return wagon
 end)
 
-lib.callback.register('nt_stables:server:setWagonHorse', function(source, wagonId, slot, horseId)
+RegisterSqlCallback('nt_stables:server:setWagonHorses', function(source, wagonId, assignments)
     local Player = RSGCore.Functions.GetPlayer(source)
-    if not Player then return { success = false, message = 'Player not found.' } end
-
     wagonId = tonumber(wagonId)
-    slot = tonumber(slot)
-    horseId = tonumber(horseId)
-    if not wagonId or not slot or slot % 1 ~= 0 then
-        return { success = false, message = 'Invalid wagon horse slot.' }
+    if not Player or not wagonId or type(assignments) ~= 'table' then
+        return { success = false, message = 'Invalid wagon horse assignments.' }
     end
 
-    local wagon = MySQL.single.await('SELECT id, model FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
+    local citizenid = Player.PlayerData.citizenid
+    local wagon = MySQL.single.await('SELECT id, model FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', {
         wagonId,
-        Player.PlayerData.citizenid,
+        citizenid,
     })
     local wagonConfig = wagon and ConfigWagon.Wagons[wagon.model]
-    if not wagonConfig or slot < 1 or slot > wagonConfig.horseCount then
-        return { success = false, message = 'Invalid wagon horse slot.' }
+    if not wagonConfig or #assignments > wagonConfig.horseCount then
+        return { success = false, message = 'Invalid wagon horse assignments.' }
     end
 
-    if not horseId then
-        MySQL.update.await('DELETE FROM nt_stable_wagon_horses WHERE wagon_id = ? AND slot = ? AND citizenid = ?', {
-            wagonId,
-            slot,
-            Player.PlayerData.citizenid,
-        })
-        if not MoveWagonToStableIfOver(Player, wagonId, wagon.model) then
-            return { success = false, message = 'The wagon cargo could not be moved to stable storage.' }
-        end
-        local clearedWagon = ClearIncompleteActiveWagon(Player)
-        return { success = true, clearedWagon = clearedWagon }
-    end
-
-    local horse = MySQL.single.await('SELECT id, active FROM player_horses WHERE id = ? AND citizenid = ?', {
-        horseId,
-        Player.PlayerData.citizenid,
+    local ownedHorses = MySQL.query.await("SELECT * FROM nt_stable_horses WHERE citizenid = ? AND location = 'stable'", {
+        citizenid,
     })
-    if not horse then return { success = false, message = 'Horse not found.' } end
+    local horsesById = {}
+    for _, horse in ipairs(ownedHorses) do horsesById[tonumber(horse.id)] = horse end
 
-    local wasRiding = horse.active == 1 or horse.active == true
-    if wasRiding
-        and not MoveInventoryToStable(Player, 'horse_saddlebag_' .. Player.PlayerData.citizenid, 'Horse saddlebag') then
+    local selected = {}
+    local usedSlots = {}
+    local usedHorses = {}
+    local wasRiding = false
+    local pullWeight = 0
+    for _, assignment in ipairs(assignments) do
+        local slot = tonumber(assignment.slot)
+        local horseId = tonumber(assignment.horseId or assignment.id)
+        local horse = horseId and horsesById[horseId]
+        if not slot or slot % 1 ~= 0 or slot < 1 or slot > wagonConfig.horseCount or not horse
+            or usedSlots[slot] or usedHorses[horseId] then
+            return { success = false, message = 'Invalid wagon horse assignments.' }
+        end
+        usedSlots[slot] = true
+        usedHorses[horseId] = true
+        selected[#selected + 1] = { slot = slot, horseId = horseId, horse = horse }
+        wasRiding = wasRiding or horse.active == 1 or horse.active == true
+        local _, stats = HorseStats.Calculate(horse)
+        if stats then pullWeight = pullWeight + (HorseStats.GetPullWeight(stats.strength) * 1000) end
+    end
+
+    if wasRiding and not MoveInventoryToStable(Player, 'horse_saddlebag_' .. citizenid, 'Horse saddlebag') then
         return { success = false, message = 'The saddlebag could not be moved to stable storage.' }
     end
 
-    MySQL.update.await('DELETE FROM nt_stable_wagon_horses WHERE wagon_id = ? AND horse_id = ? AND citizenid = ?', {
-        wagonId,
-        horseId,
-        Player.PlayerData.citizenid,
+    local wagonInventoryId = 'wagon_' .. wagonId
+    exports['rsg-inventory']:CreateInventory(wagonInventoryId, {
+        maxweight = wagonConfig.maxWeight,
+        slots = wagonConfig.slots,
     })
-    MySQL.query.await([[INSERT INTO nt_stable_wagon_horses (wagon_id, slot, horse_id, citizenid)
-        VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE horse_id = VALUES(horse_id), citizenid = VALUES(citizenid)]], {
-        wagonId,
-        slot,
-        horseId,
-        Player.PlayerData.citizenid,
-    })
-
-    if wasRiding then
-        MySQL.update.await('UPDATE player_horses SET active = 0 WHERE id = ? AND citizenid = ?', {
-            horseId,
-            Player.PlayerData.citizenid,
-        })
-    end
-
-    if not MoveWagonToStableIfOver(Player, wagonId, wagon.model) then
+    local wagonInventory = exports['rsg-inventory']:GetInventory(wagonInventoryId)
+    local maxWeight = math.min(pullWeight, wagonConfig.maxWeight)
+    if exports['rsg-inventory']:GetTotalWeight(wagonInventory.items) > maxWeight
+        and not MoveInventoryToStable(Player, wagonInventoryId, 'Wagon cargo') then
         return { success = false, message = 'The wagon cargo could not be moved to stable storage.' }
     end
 
+    local wasActiveWagon = GetActiveWagonId(Player) == wagonId
+    local statements = {
+        {
+            query = 'DELETE FROM nt_stable_wagon_horses WHERE wagon_id = ? AND citizenid = ?',
+            values = { wagonId, citizenid },
+        },
+    }
+    for _, assignment in ipairs(selected) do
+        statements[#statements + 1] = {
+            query = 'INSERT INTO nt_stable_wagon_horses (wagon_id, slot, horse_id, citizenid) VALUES (?, ?, ?, ?)',
+            values = { wagonId, assignment.slot, assignment.horseId, citizenid },
+        }
+        if assignment.horse.active == 1 or assignment.horse.active == true then
+            statements[#statements + 1] = {
+                query = 'UPDATE nt_stable_horses SET active = 0 WHERE id = ? AND citizenid = ?',
+                values = { assignment.horseId, citizenid },
+            }
+        end
+    end
+
+    if not MySQL.transaction.await(statements) then
+        return { success = false, message = 'The wagon horse assignments could not be saved.' }
+    end
+
+    local wagonHorses = GetWagonHorseAssignments(citizenid)
+    local clearedWagon = ClearIncompleteActiveWagon(Player)
     return {
         success = true,
+        assignments = wagonHorses[wagonId] or {},
         wasRiding = wasRiding,
-        activeWagonChanged = GetActiveWagonId(Player) == wagonId,
+        clearedWagon = clearedWagon,
+        activeWagonChanged = wasActiveWagon,
     }
 end)
 
-lib.callback.register('nt_stables:server:buyWagon', function(source, model, wagonName, livery, tint, extras, lantern)
+RegisterSqlCallback('nt_stables:server:buyWagon', function(source, model, wagonName, livery, tint, extras, lantern)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
 
@@ -1083,7 +1057,7 @@ lib.callback.register('nt_stables:server:buyWagon', function(source, model, wago
         return { success = false, message = 'Wagon names must contain 1 to 100 valid characters.' }
     end
 
-    local wagonCount = MySQL.scalar.await('SELECT COUNT(*) FROM wagonmaker_wagons WHERE citizenid = ?', {
+    local wagonCount = MySQL.scalar.await('SELECT COUNT(*) FROM nt_stable_wagons WHERE citizenid = ?', {
         Player.PlayerData.citizenid,
     })
     local slots = GetStableSlots(Player)
@@ -1105,33 +1079,43 @@ lib.callback.register('nt_stables:server:buyWagon', function(source, model, wago
         return { success = false, message = 'You do not have enough cash.' }
     end
 
-    local wagonId = MySQL.insert.await([[INSERT INTO wagonmaker_wagons
-        (citizenid, model, name, livery, tint, extra, extras, lantern, parking_location)
+    local wagonId, wagonPublicId = ReserveStableEntityId(Player.PlayerData.citizenid, 'W')
+    local inserted = wagonId and MySQL.insert.await([[INSERT INTO nt_stable_wagons
+        (id, wagonid, citizenid, model, name, livery, tint, extras, lantern)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)]], {
+        wagonId,
+        wagonPublicId,
         Player.PlayerData.citizenid,
         model,
         wagonName,
         customization.livery,
         customization.tint,
-        0,
         json.encode(customization.extras),
         customization.lantern,
-        1,
     })
 
-    if not wagonId then
+    if not inserted then
         Player.Functions.AddMoney(Config.StableSlots.MoneyType, price)
         return { success = false, message = 'The wagon purchase could not be saved.' }
     end
 
-    return { success = true, wagonId = wagonId, price = price }
+    local savedWagon = MySQL.single.await('SELECT * FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', {
+        wagonId,
+        Player.PlayerData.citizenid,
+    })
+    savedWagon.horses = {}
+    savedWagon.active = false
+    savedWagon.ready = false
+    savedWagon.repairPrice = math.floor(((wagonConfig.price * ConfigWagon.Prices.repair) * 100) + 0.5) / 100
+    savedWagon.sellPrice = math.floor((wagonConfig.price * Config.StableSlots.SellPriceMultiplier) + 0.5)
+    return { success = true, wagonId = wagonId, wagon = savedWagon, price = price }
 end)
 
-lib.callback.register('nt_stables:server:saveWagonCustomization', function(source, wagonId, livery, tint, extras, lantern)
+RegisterSqlCallback('nt_stables:server:saveWagonCustomization', function(source, wagonId, livery, tint, extras, lantern)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
 
-    local wagon = MySQL.single.await('SELECT model, livery, tint, extra, extras, lantern FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
+    local wagon = MySQL.single.await('SELECT model, livery, tint, extras, lantern FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', {
         tonumber(wagonId),
         Player.PlayerData.citizenid,
     })
@@ -1144,8 +1128,6 @@ lib.callback.register('nt_stables:server:saveWagonCustomization', function(sourc
     if wagon.extras then
         local success, storedExtras = pcall(json.decode, wagon.extras)
         if success and type(storedExtras) == 'table' then currentExtras = storedExtras end
-    elseif tonumber(wagon.extra) and tonumber(wagon.extra) > 0 then
-        currentExtras[1] = tonumber(wagon.extra)
     end
 
     local price = 0
@@ -1161,8 +1143,8 @@ lib.callback.register('nt_stables:server:saveWagonCustomization', function(sourc
         return { success = false, message = 'You do not have enough cash for these changes.' }
     end
 
-    local updated = MySQL.update.await([[UPDATE wagonmaker_wagons
-        SET livery = ?, tint = ?, extra = 0, extras = ?, lantern = ? WHERE id = ? AND citizenid = ?]], {
+    local updated = MySQL.update.await([[UPDATE nt_stable_wagons
+        SET livery = ?, tint = ?, extras = ?, lantern = ? WHERE id = ? AND citizenid = ?]], {
         customization.livery,
         customization.tint,
         json.encode(customization.extras),
@@ -1178,14 +1160,14 @@ lib.callback.register('nt_stables:server:saveWagonCustomization', function(sourc
     return { success = true, price = price }
 end)
 
-lib.callback.register('nt_stables:server:renameWagon', function(source, wagonId, wagonName)
+RegisterSqlCallback('nt_stables:server:renameWagon', function(source, wagonId, wagonName)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return false end
 
     wagonName = tostring(wagonName or ''):match('^%s*(.-)%s*$')
     if wagonName == '' or #wagonName > 100 or wagonName:find("[^%w%s%-'()]") then return false end
 
-    local updated = MySQL.update.await('UPDATE wagonmaker_wagons SET name = ? WHERE id = ? AND citizenid = ?', {
+    local updated = MySQL.update.await('UPDATE nt_stable_wagons SET name = ? WHERE id = ? AND citizenid = ?', {
         wagonName,
         tonumber(wagonId),
         Player.PlayerData.citizenid,
@@ -1193,26 +1175,12 @@ lib.callback.register('nt_stables:server:renameWagon', function(source, wagonId,
     return updated and updated > 0
 end)
 
-lib.callback.register('nt_stables:server:getWagonSellPrice', function(source, wagonId)
-    local Player = RSGCore.Functions.GetPlayer(source)
-    if not Player then return end
-
-    local wagon = MySQL.single.await('SELECT model FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
-        tonumber(wagonId),
-        Player.PlayerData.citizenid,
-    })
-    local wagonConfig = wagon and ConfigWagon.Wagons[wagon.model]
-    if not wagonConfig then return end
-
-    return math.floor((wagonConfig.price * Config.StableSlots.SellPriceMultiplier) + 0.5)
-end)
-
-lib.callback.register('nt_stables:server:sellWagon', function(source, wagonId)
+RegisterSqlCallback('nt_stables:server:sellWagon', function(source, wagonId)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return end
 
     wagonId = tonumber(wagonId)
-    local wagon = MySQL.single.await('SELECT * FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
+    local wagon = MySQL.single.await('SELECT * FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', {
         wagonId,
         Player.PlayerData.citizenid,
     })
@@ -1224,7 +1192,7 @@ lib.callback.register('nt_stables:server:sellWagon', function(source, wagonId)
     end
 
     local sellPrice = math.floor((wagonConfig.price * Config.StableSlots.SellPriceMultiplier) + 0.5)
-    local deleted = MySQL.update.await('DELETE FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
+    local deleted = MySQL.update.await('DELETE FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', {
         wagonId,
         Player.PlayerData.citizenid,
     })
@@ -1236,13 +1204,12 @@ lib.callback.register('nt_stables:server:sellWagon', function(source, wagonId)
     })
     local wasActive = GetActiveWagonId(Player) == wagonId
     if wasActive then Player.Functions.SetMetaData('stable_active_wagon', false) end
-    MySQL.update('DELETE FROM inventories WHERE identifier = ?', { 'wagon_' .. wagonId })
     Player.Functions.AddMoney(Config.StableSlots.MoneyType, sellPrice)
 
     return { price = sellPrice, wasActive = wasActive }
 end)
 
-lib.callback.register('nt_stables:server:buyHorse', function(source, stableName, model, horseName, gender, components)
+RegisterSqlCallback('nt_stables:server:buyHorse', function(source, stableName, model, horseName, gender, components, appearance)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
 
@@ -1251,13 +1218,15 @@ lib.callback.register('nt_stables:server:buyHorse', function(source, stableName,
         return { success = false, message = 'Horse names must contain 1 to 32 valid characters.' }
     end
 
-    if gender ~= 'male' and gender ~= 'female' then
-        return { success = false, message = 'Select a valid horse gender.' }
-    end
+    gender = gender == 'female' and 'female' or 'male'
 
     local validComponents = ValidateComponents(components)
+    local validAppearance = ValidateAppearance(appearance)
     if not validComponents then
         return { success = false, message = 'Invalid horse customization.' }
+    end
+    if not validAppearance then
+        return { success = false, message = 'The horse appearance could not be captured.' }
     end
 
     local isStableHorse = false
@@ -1273,7 +1242,7 @@ lib.callback.register('nt_stables:server:buyHorse', function(source, stableName,
         return { success = false, message = 'That horse is not available at this stable.' }
     end
 
-    local horseCount = MySQL.scalar.await('SELECT COUNT(*) FROM player_horses WHERE citizenid = ?', {
+    local horseCount = MySQL.scalar.await("SELECT COUNT(*) FROM nt_stable_horses WHERE citizenid = ? AND location = 'stable'", {
         Player.PlayerData.citizenid,
     })
     local slots = GetStableSlots(Player)
@@ -1289,42 +1258,50 @@ lib.callback.register('nt_stables:server:buyHorse', function(source, stableName,
         return { success = false, message = 'You do not have enough cash.' }
     end
 
-    local horseId = GenerateHorseId()
-    local databaseId = MySQL.insert.await([[INSERT INTO player_horses
-        (stable, citizenid, horseid, name, horse, dirt, horsexp, components, gender, active, born)
-        VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, 0, ?)]], {
-        stableName,
-        Player.PlayerData.citizenid,
+    local databaseId, horseId = ReserveStableEntityId(Player.PlayerData.citizenid, 'H')
+    local saved = databaseId and MySQL.transaction.await({
+        {
+            query = 'UPDATE nt_stable_horses SET active = 0 WHERE citizenid = ? AND location = ?',
+            values = { Player.PlayerData.citizenid, 'stable' },
+        },
+        {
+            query = [[INSERT INTO nt_stable_horses
+                (id, horseid, citizenid, name, horse, horsexp, components, gender, appearance, active, location)
+                VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, 1, 'stable')]],
+            values = {
+        databaseId,
         horseId,
+        Player.PlayerData.citizenid,
         horseName,
         model,
         json.encode(validComponents),
         gender,
-        os.time(),
+        json.encode(validAppearance),
+            },
+        },
     })
 
-    if not databaseId then
+    if not saved then
         Player.Functions.AddMoney('cash', stats.price)
         return { success = false, message = 'The horse purchase could not be saved.' }
     end
 
-    MySQL.update.await('UPDATE player_horses SET active = 0 WHERE citizenid = ?', {
-        Player.PlayerData.citizenid,
-    })
-    MySQL.update.await('UPDATE player_horses SET active = 1 WHERE id = ? AND citizenid = ?', {
+    Player.Functions.SetMetaData('stable_active_ride', { type = 'horse' })
+
+    local savedHorse = MySQL.single.await("SELECT * FROM nt_stable_horses WHERE id = ? AND citizenid = ? AND location = 'stable'", {
         databaseId,
         Player.PlayerData.citizenid,
     })
-    Player.Functions.SetMetaData('stable_active_ride', { type = 'horse' })
-
-    return { success = true, horseId = databaseId }
+    savedHorse.isWagonHorse = false
+    savedHorse.sellPrice = GetSellPrice(savedHorse)
+    return { success = true, horseId = databaseId, horse = savedHorse }
 end)
 
 local function ChargeStableFee(Player)
-    local horseCount = MySQL.scalar.await('SELECT COUNT(*) FROM player_horses WHERE citizenid = ?', {
+    local horseCount = MySQL.scalar.await("SELECT COUNT(*) FROM nt_stable_horses WHERE citizenid = ? AND location = 'stable'", {
         Player.PlayerData.citizenid,
     })
-    local wagonCount = MySQL.scalar.await('SELECT COUNT(*) FROM wagonmaker_wagons WHERE citizenid = ?', {
+    local wagonCount = MySQL.scalar.await('SELECT COUNT(*) FROM nt_stable_wagons WHERE citizenid = ?', {
         Player.PlayerData.citizenid,
     })
     local ownershipFee = (horseCount * Config.StableSlots.Horse.CostPerHour)
@@ -1373,22 +1350,25 @@ CreateThread(function()
         Wait(60000)
 
         for _, playerId in ipairs(GetPlayers()) do
-            local Player = RSGCore.Functions.GetPlayer(tonumber(playerId))
-            if Player then
-                local stablePlayTime = (tonumber(Player.PlayerData.metadata.stablePlayTime) or 0) + 1
+            playerId = tonumber(playerId)
+            sqlAction('charge_stable_fee', playerId, function()
+                local Player = RSGCore.Functions.GetPlayer(playerId)
+                if Player then
+                    local stablePlayTime = (tonumber(Player.PlayerData.metadata.stablePlayTime) or 0) + 1
 
-                if stablePlayTime >= Config.StableSlots.FeeInterval then
-                    Player.Functions.SetMetaData('stablePlayTime', 0)
-                    ChargeStableFee(Player)
-                else
-                    Player.Functions.SetMetaData('stablePlayTime', stablePlayTime)
+                    if stablePlayTime >= Config.StableSlots.FeeInterval then
+                        Player.Functions.SetMetaData('stablePlayTime', 0)
+                        ChargeStableFee(Player)
+                    else
+                        Player.Functions.SetMetaData('stablePlayTime', stablePlayTime)
+                    end
                 end
-            end
+            end)
         end
     end
 end)
 
-lib.callback.register('nt_stables:server:saveHorseComponents', function(source, horseId, components, appearance)
+RegisterSqlCallback('nt_stables:server:saveHorseComponents', function(source, horseId, components, appearance)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
 
@@ -1397,7 +1377,7 @@ lib.callback.register('nt_stables:server:saveHorseComponents', function(source, 
     local validAppearance = ValidateAppearance(appearance)
     if not validAppearance then return { success = false, message = 'The horse appearance could not be captured.' } end
 
-    local horse = MySQL.single.await('SELECT components FROM player_horses WHERE id = ? AND citizenid = ?', {
+    local horse = MySQL.single.await("SELECT components FROM nt_stable_horses WHERE id = ? AND citizenid = ? AND location = 'stable'", {
         horseId,
         Player.PlayerData.citizenid,
     })
@@ -1426,7 +1406,7 @@ lib.callback.register('nt_stables:server:saveHorseComponents', function(source, 
         return { success = false, message = 'You do not have enough cash for these changes.' }
     end
 
-    local updated = MySQL.update.await('UPDATE player_horses SET components = ?, appearance = ? WHERE id = ? AND citizenid = ?', {
+    local updated = MySQL.update.await("UPDATE nt_stable_horses SET components = ?, appearance = ? WHERE id = ? AND citizenid = ? AND location = 'stable'", {
         json.encode(validComponents),
         json.encode(validAppearance),
         horseId,
@@ -1441,50 +1421,32 @@ lib.callback.register('nt_stables:server:saveHorseComponents', function(source, 
     return { success = true, price = price }
 end)
 
-lib.callback.register('nt_stables:server:renameHorse', function(source, horseId, horseName)
+RegisterSqlCallback('nt_stables:server:renameHorse', function(source, horseId, horseName)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return false end
 
     horseName = tostring(horseName or ''):match('^%s*(.-)%s*$')
     if horseName == '' or #horseName > 32 then return false end
 
-    local horse = MySQL.single.await('SELECT horseid, name FROM player_horses WHERE id = ? AND citizenid = ?', {
+    local horse = MySQL.single.await("SELECT id FROM nt_stable_horses WHERE id = ? AND citizenid = ? AND location = 'stable'", {
         horseId,
         Player.PlayerData.citizenid,
     })
     if not horse then return false end
 
-    MySQL.update.await('UPDATE player_horses SET name = ? WHERE id = ? AND citizenid = ?', {
+    MySQL.update.await("UPDATE nt_stable_horses SET name = ? WHERE id = ? AND citizenid = ? AND location = 'stable'", {
         horseName,
         horseId,
         Player.PlayerData.citizenid,
     })
-    MySQL.update('UPDATE inventories SET identifier = ? WHERE identifier = ?', {
-        horseName .. ' ' .. horse.horseid,
-        horse.name .. ' ' .. horse.horseid,
-    })
-
     return true
 end)
 
-lib.callback.register('nt_stables:server:getHorseSellPrice', function(source, horseId)
+RegisterSqlCallback('nt_stables:server:sellHorse', function(source, horseId)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return end
 
-    local horse = MySQL.single.await('SELECT * FROM player_horses WHERE id = ? AND citizenid = ?', {
-        horseId,
-        Player.PlayerData.citizenid,
-    })
-    if not horse then return end
-
-    return GetSellPrice(horse)
-end)
-
-lib.callback.register('nt_stables:server:sellHorse', function(source, horseId)
-    local Player = RSGCore.Functions.GetPlayer(source)
-    if not Player then return end
-
-    local horse = MySQL.single.await('SELECT * FROM player_horses WHERE id = ? AND citizenid = ?', {
+    local horse = MySQL.single.await("SELECT * FROM nt_stable_horses WHERE id = ? AND citizenid = ? AND location = 'stable'", {
         horseId,
         Player.PlayerData.citizenid,
     })
@@ -1500,27 +1462,29 @@ lib.callback.register('nt_stables:server:sellHorse', function(source, horseId)
 
     local affectedWagons = MySQL.query.await([[SELECT wagons.id, wagons.model
         FROM nt_stable_wagon_horses assignments
-        INNER JOIN wagonmaker_wagons wagons ON wagons.id = assignments.wagon_id
+        INNER JOIN nt_stable_wagons wagons ON wagons.id = assignments.wagon_id
         WHERE assignments.horse_id = ? AND assignments.citizenid = ? AND wagons.citizenid = ?]], {
         horseId,
         Player.PlayerData.citizenid,
         Player.PlayerData.citizenid,
     })
-    MySQL.update.await('DELETE FROM nt_stable_wagon_horses WHERE horse_id = ? AND citizenid = ?', {
-        horseId,
-        Player.PlayerData.citizenid,
-    })
     for _, wagon in ipairs(affectedWagons) do
-        if not MoveWagonToStableIfOver(Player, tonumber(wagon.id), wagon.model) then
+        if not MoveWagonToStableIfOver(Player, tonumber(wagon.id), wagon.model, horseId) then
             return { success = false, message = 'The wagon cargo could not be moved to stable storage.' }
         end
     end
 
-    local deleted = MySQL.update.await('DELETE FROM player_horses WHERE id = ? AND citizenid = ?', {
-        horseId,
-        Player.PlayerData.citizenid,
+    local deleted = MySQL.transaction.await({
+        {
+            query = 'DELETE FROM nt_stable_wagon_horses WHERE horse_id = ? AND citizenid = ?',
+            values = { horseId, Player.PlayerData.citizenid },
+        },
+        {
+            query = "DELETE FROM nt_stable_horses WHERE id = ? AND citizenid = ? AND location = 'stable'",
+            values = { horseId, Player.PlayerData.citizenid },
+        },
     })
-    if not deleted or deleted < 1 then return end
+    if not deleted then return end
 
     local clearedWagon = ClearIncompleteActiveWagon(Player)
 
@@ -1533,25 +1497,17 @@ lib.callback.register('nt_stables:server:sellHorse', function(source, horseId)
     }
 end)
 
-RegisterNetEvent('nt_stables:server:openSaddleBag', function(horseId)
-    local src = source
+RegisterSqlEvent('nt_stables:server:openSaddleBag', function(src, horseId)
     local Player = RSGCore.Functions.GetPlayer(src)
     if not Player then return end
 
-    local horse = MySQL.single.await('SELECT * FROM player_horses WHERE horseid = ? AND citizenid = ? AND active = ?', {
+    local horse = MySQL.single.await("SELECT * FROM nt_stable_horses WHERE horseid = ? AND citizenid = ? AND active = ? AND location = 'stable'", {
         horseId,
         Player.PlayerData.citizenid,
         1,
     })
 
     if not horse then return end
-
-    local previousSaddleBagId = horse.name .. ' ' .. horse.horseid
-    exports['rsg-inventory']:CreateInventory(previousSaddleBagId, {})
-    local previousSaddleBag = exports['rsg-inventory']:GetInventory(previousSaddleBagId)
-    if previousSaddleBag and next(previousSaddleBag.items) then
-        if not MoveInventoryToStable(Player, previousSaddleBagId, 'Previous saddlebag') then return end
-    end
 
     local carryWeight = GetHorseCarryWeight(horse)
     exports['rsg-inventory']:CreateInventory('horse_saddlebag_' .. Player.PlayerData.citizenid, {
@@ -1572,15 +1528,14 @@ RegisterNetEvent('nt_stables:server:openSaddleBag', function(horseId)
     })
 end)
 
-RegisterNetEvent('nt_stables:server:openWagonInventory', function(wagonId)
-    local src = source
+RegisterSqlEvent('nt_stables:server:openWagonInventory', function(src, wagonId)
     local Player = RSGCore.Functions.GetPlayer(src)
     if not Player then return end
 
     wagonId = tonumber(wagonId)
     if not wagonId or GetActiveWagonId(Player) ~= wagonId then return end
 
-    local wagon = MySQL.single.await('SELECT id, model, name FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
+    local wagon = MySQL.single.await('SELECT id, model, name FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', {
         wagonId,
         Player.PlayerData.citizenid,
     })
@@ -1589,10 +1544,8 @@ RegisterNetEvent('nt_stables:server:openWagonInventory', function(wagonId)
     local wagonConfig = ConfigWagon.Wagons[wagon.model]
     if not wagonConfig then return end
 
-    local destroyed = destroyedWagons[src] and destroyedWagons[src][wagonId]
-    local maxWeight = destroyed and wagonConfig.maxWeight
-        or GetWagonInventoryMaxWeight(Player.PlayerData.citizenid, wagon.id, wagon.model)
-    if not destroyed and not MoveWagonToStableIfOver(Player, wagon.id, wagon.model) then return end
+    local maxWeight = GetWagonInventoryMaxWeight(Player.PlayerData.citizenid, wagon.id, wagon.model)
+    if not MoveWagonToStableIfOver(Player, wagon.id, wagon.model) then return end
 
     exports['rsg-inventory']:OpenInventory(src, 'wagon_' .. wagon.id, {
         label = wagon.name .. ' Storage',
@@ -1601,15 +1554,15 @@ RegisterNetEvent('nt_stables:server:openWagonInventory', function(wagonId)
     })
 end)
 
-lib.callback.register('nt_stables:server:getStableInventory', function(source, stableName)
+RegisterSqlCallback('nt_stables:server:getStableInventory', function(source, stableName)
     local Player = RSGCore.Functions.GetPlayer(source)
-    if not Player or not IsNearStable(source, stableName) then return end
+    if not Player then return end
     return GetStableInventoryTransferData(Player)
 end)
 
-lib.callback.register('nt_stables:server:transferStableInventory', function(source, stableName, destinationType, selectedSlots)
+RegisterSqlCallback('nt_stables:server:transferStableInventory', function(source, stableName, destinationType, selectedSlots)
     local Player = RSGCore.Functions.GetPlayer(source)
-    if not Player or not IsNearStable(source, stableName) or type(selectedSlots) ~= 'table' then
+    if not Player or not IsNearStableNpc(source, stableName) or type(selectedSlots) ~= 'table' then
         return { success = false, message = 'The stable inventory could not be accessed.' }
     end
     local citizenid = Player.PlayerData.citizenid
@@ -1683,27 +1636,13 @@ RegisterNetEvent('rsg-inventory:server:closeInventory', function(identifier)
     end)
 end)
 
-RegisterNetEvent('nt_stables:server:setHorseDirt', function(dirt)
-    local Player = RSGCore.Functions.GetPlayer(source)
-    if not Player then return end
-
-    dirt = tonumber(dirt)
-    if not dirt or dirt < 0 or dirt > 100 then return end
-
-    MySQL.update('UPDATE player_horses SET dirt = ? WHERE citizenid = ? AND active = ?', {
-        dirt,
-        Player.PlayerData.citizenid,
-        1,
-    })
-end)
-
 local function AwardHorseTraining(src, citizenid, horse, xp)
     local oldXP = math.min(ConfigStables.Training.MaximumXP, tonumber(horse.horsexp) or 0)
     if oldXP >= ConfigStables.Training.MaximumXP then return end
 
     local oldLevel = GetTrainingLevel(oldXP)
     local newXP = math.min(ConfigStables.Training.MaximumXP, oldXP + xp)
-    MySQL.update.await('UPDATE player_horses SET horsexp = ? WHERE id = ? AND citizenid = ?', {
+    MySQL.update.await('UPDATE nt_stable_horses SET horsexp = ? WHERE id = ? AND citizenid = ?', {
         newXP,
         horse.id,
         citizenid,
@@ -1716,8 +1655,7 @@ local function AwardHorseTraining(src, citizenid, horse, xp)
     )
 end
 
-RegisterNetEvent('nt_stables:server:addHorseTraining', function(method)
-    local src = source
+RegisterSqlEvent('nt_stables:server:addHorseTraining', function(src, method)
     local Player = RSGCore.Functions.GetPlayer(src)
     local xp = method == 'riding' and ConfigStables.Training.RidingXP or method == 'leading' and ConfigStables.Training.LeadingXP
     if not Player or not xp then return end
@@ -1726,7 +1664,7 @@ RegisterNetEvent('nt_stables:server:addHorseTraining', function(method)
     local now = os.time()
     if now - (trainingAwards[src][method] or 0) < ConfigStables.Training.AwardTime - 5 then return end
 
-    local horse = MySQL.single.await('SELECT id, name, horsexp FROM player_horses WHERE citizenid = ? AND active = ?', {
+    local horse = MySQL.single.await("SELECT id, name, horsexp FROM nt_stable_horses WHERE citizenid = ? AND active = ? AND location = 'stable'", {
         Player.PlayerData.citizenid,
         1,
     })
@@ -1736,8 +1674,7 @@ RegisterNetEvent('nt_stables:server:addHorseTraining', function(method)
     AwardHorseTraining(src, Player.PlayerData.citizenid, horse, xp)
 end)
 
-RegisterNetEvent('nt_stables:server:addWagonTraining', function(wagonId, horseIds)
-    local src = source
+RegisterSqlEvent('nt_stables:server:addWagonTraining', function(src, wagonId, horseIds)
     local Player = RSGCore.Functions.GetPlayer(src)
     wagonId = tonumber(wagonId)
     if not Player or not wagonId or type(horseIds) ~= 'table' or #horseIds > 4 or GetActiveWagonId(Player) ~= wagonId then return end
@@ -1754,7 +1691,7 @@ RegisterNetEvent('nt_stables:server:addWagonTraining', function(wagonId, horseId
 
     local horses = MySQL.query.await([[SELECT horses.id, horses.name, horses.horsexp
         FROM nt_stable_wagon_horses assignments
-        INNER JOIN player_horses horses ON horses.id = assignments.horse_id
+        INNER JOIN nt_stable_horses horses ON horses.id = assignments.horse_id
         WHERE assignments.wagon_id = ? AND assignments.citizenid = ? AND horses.citizenid = ?]], {
         wagonId,
         Player.PlayerData.citizenid,
@@ -1775,13 +1712,12 @@ RegisterNetEvent('nt_stables:server:addWagonTraining', function(wagonId, horseId
     end
 end)
 
-RegisterNetEvent('nt_stables:server:addHorseCareTraining', function(action)
-    local src = source
+RegisterSqlEvent('nt_stables:server:addHorseCareTraining', function(src, action)
     local Player = RSGCore.Functions.GetPlayer(src)
     local xp = ConfigStables.Training.CareXP[action]
     if not Player or not xp then return end
 
-    local horse = MySQL.single.await('SELECT id, name, horsexp FROM player_horses WHERE citizenid = ? AND active = ?', {
+    local horse = MySQL.single.await("SELECT id, name, horsexp FROM nt_stable_horses WHERE citizenid = ? AND active = ? AND location = 'stable'", {
         Player.PlayerData.citizenid,
         1,
     })
@@ -1796,61 +1732,39 @@ RegisterNetEvent('nt_stables:server:addHorseCareTraining', function(action)
     AwardHorseTraining(src, Player.PlayerData.citizenid, horse, xp)
 end)
 
-local function FinalizeHorseDeath(death)
-    local horse = MySQL.single.await('SELECT id, name, active FROM player_horses WHERE id = ? AND citizenid = ?', {
-        death.horseId,
-        death.citizenid,
-    })
-    if not horse then return end
-
-    MySQL.update.await('DELETE FROM nt_stable_wagon_horses WHERE horse_id = ? AND citizenid = ?', {
-        death.horseId,
-        death.citizenid,
-    })
-    MySQL.update.await('DELETE FROM player_horses WHERE id = ? AND citizenid = ?', {
-        death.horseId,
-        death.citizenid,
-    })
-
-    local Player = RSGCore.Functions.GetPlayer(death.source)
-    if Player and Player.PlayerData.citizenid == death.citizenid then
-        TriggerClientEvent('ox_lib:notify', death.source, {
-            title = horse.name .. ' has permanently died.',
-            type = 'error',
-            duration = 10000,
-        })
-    end
-end
-
-RegisterNetEvent('nt_stables:server:beginHorseDeath', function(horseId)
-    local src = source
+RegisterSqlEvent('nt_stables:server:horseFailedRevive', function(src, horseId)
     local Player = RSGCore.Functions.GetPlayer(src)
     horseId = tonumber(horseId)
     if not Player or not horseId then return end
 
-    pendingHorseDeaths[src] = pendingHorseDeaths[src] or {}
-    if pendingHorseDeaths[src][horseId] then return end
-    pendingHorseDeaths[src][horseId] = {
-        source = src,
-        horseId = horseId,
-        citizenid = Player.PlayerData.citizenid,
-    }
-end)
+    local citizenid = Player.PlayerData.citizenid
+    local horse = MySQL.single.await("SELECT id, name, active FROM nt_stable_horses WHERE id = ? AND citizenid = ? AND location = 'stable'", {
+        horseId,
+        citizenid,
+    })
+    if not horse then return end
 
-RegisterNetEvent('nt_stables:server:cancelHorseDeath', function(horseId)
-    horseId = tonumber(horseId)
-    if not horseId or not pendingHorseDeaths[source] then return end
-    pendingHorseDeaths[source][horseId] = nil
-end)
+    local deleted = MySQL.transaction.await({
+        {
+            query = 'DELETE FROM nt_stable_wagon_horses WHERE horse_id = ? AND citizenid = ?',
+            values = { horseId, citizenid },
+        },
+        {
+            query = "DELETE FROM nt_stable_horses WHERE id = ? AND citizenid = ? AND location = 'stable'",
+            values = { horseId, citizenid },
+        },
+    })
+    if not deleted then return end
 
-RegisterNetEvent('nt_stables:server:finishHorseDeath', function(horseId)
-    local src = source
-    horseId = tonumber(horseId)
-    local death = horseId and pendingHorseDeaths[src] and pendingHorseDeaths[src][horseId]
-    if not death then return end
-
-    pendingHorseDeaths[src][horseId] = nil
-    FinalizeHorseDeath(death)
+    if horse.active == 1 or horse.active == true then
+        Player.Functions.SetMetaData('stable_active_horse', false)
+    end
+    ClearIncompleteActiveWagon(Player)
+    TriggerClientEvent('ox_lib:notify', src, {
+        title = horse.name .. ' has permanently died.',
+        type = 'error',
+        duration = 10000,
+    })
 end)
 
 RSGCore.Functions.CreateUseableItem('horse_reviver', function(source)
@@ -1865,76 +1779,29 @@ RegisterNetEvent('nt_stables:server:removeHorseReviver', function()
     end
 end)
 
-RegisterNetEvent('nt_stables:server:destroyWagon', function(wagonId)
-    local src = source
+RegisterSqlEvent('nt_stables:server:wagonDestroyed', function(src, wagonId)
     local Player = RSGCore.Functions.GetPlayer(src)
     wagonId = tonumber(wagonId)
     if not Player or not wagonId or GetActiveWagonId(Player) ~= wagonId then return end
 
-    destroyedWagons[src] = destroyedWagons[src] or {}
-    if destroyedWagons[src][wagonId] then return end
-    destroyedWagons[src][wagonId] = true
-
-    local wagon = MySQL.single.await('SELECT id, model FROM wagonmaker_wagons WHERE id = ? AND citizenid = ?', {
+    local wagon = MySQL.single.await('SELECT id, model FROM nt_stable_wagons WHERE id = ? AND citizenid = ?', {
         wagonId,
         Player.PlayerData.citizenid,
     })
     if not wagon then
-        destroyedWagons[src][wagonId] = nil
         return
     end
 
-    MySQL.update.await('UPDATE wagonmaker_wagons SET needs_repair = 1 WHERE id = ? AND citizenid = ?', {
+    MySQL.update.await('UPDATE nt_stable_wagons SET needs_repair = 1 WHERE id = ? AND citizenid = ?', {
         wagonId,
         Player.PlayerData.citizenid,
     })
-    if destroyedWagons[src] and destroyedWagons[src][wagonId] then
-        destroyedWagons[src][wagonId] = wagon
-    end
-end)
-
-RegisterNetEvent('nt_stables:server:releaseWagonHorse', function(wagonId, horseId)
-    local src = source
-    local Player = RSGCore.Functions.GetPlayer(src)
-    wagonId = tonumber(wagonId)
-    horseId = tonumber(horseId)
-    if not Player or not wagonId or not horseId then return end
-
-    MySQL.update.await('DELETE FROM nt_stable_wagon_horses WHERE wagon_id = ? AND horse_id = ? AND citizenid = ?', {
-        wagonId,
-        horseId,
-        Player.PlayerData.citizenid,
-    })
-end)
-
-RegisterNetEvent('nt_stables:server:despawnDestroyedWagon', function(wagonId)
-    local src = source
-    local Player = RSGCore.Functions.GetPlayer(src)
-    wagonId = tonumber(wagonId)
-    if not Player or not wagonId or not destroyedWagons[src] or not destroyedWagons[src][wagonId] then return end
-
     MoveInventoryToStable(Player, 'wagon_' .. wagonId, 'Wagon cargo', 'The wagon was destroyed.')
     if GetActiveWagonId(Player) == wagonId then Player.Functions.SetMetaData('stable_active_wagon', false) end
-
-    destroyedWagons[src][wagonId] = nil
 end)
 
 AddEventHandler('playerDropped', function()
     local src = source
-    local Player = RSGCore.Functions.GetPlayer(src)
-    if pendingHorseDeaths[src] then
-        for _, death in pairs(pendingHorseDeaths[src]) do
-            FinalizeHorseDeath(death)
-        end
-    end
-    pendingHorseDeaths[src] = nil
-    if Player and destroyedWagons[src] then
-        for wagonId in pairs(destroyedWagons[src]) do
-            MoveInventoryToStable(Player, 'wagon_' .. wagonId, 'Wagon cargo', 'The wagon was destroyed.')
-            if GetActiveWagonId(Player) == wagonId then Player.Functions.SetMetaData('stable_active_wagon', false) end
-        end
-    end
-    destroyedWagons[src] = nil
     trainingAwards[src] = nil
     horseCareCooldowns[src] = nil
 end)

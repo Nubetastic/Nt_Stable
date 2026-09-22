@@ -12,7 +12,6 @@ state = {
 
 local horseBlip
 local lanternEquipped = false
-local lastDirt = -1
 local horseMonitorId = 0
 local horseReviveInProgress = false
 local deadHorsePrompts = {}
@@ -102,7 +101,6 @@ local function ClearPlayerHorseState(horse)
     PlayerHorseRiding = false
     PlayerHorseFleeing = false
     lanternEquipped = false
-    lastDirt = -1
 end
 
 local function DeletePlayerHorse()
@@ -113,15 +111,8 @@ local function DeletePlayerHorse()
     if horseState and horseState.entity == horse then
         if DoesEntityExist(horse) then horseState.dead = IsEntityDead(horse) end
         horseState.isSpawned = false
-        if horseState.dead and not horseState.deathPending then
-            horseState.deathPending = true
-            TriggerServerEvent('nt_stables:server:beginHorseDeath', PlayerHorseData.id)
-        end
-        if horseState.deathPending then
-            TriggerServerEvent(
-                horseState.dead and 'nt_stables:server:finishHorseDeath' or 'nt_stables:server:cancelHorseDeath',
-                PlayerHorseData.id
-            )
+        if horseState.dead then
+            TriggerServerEvent('nt_stables:server:horseFailedRevive', PlayerHorseData.id)
         end
         state.horse[PlayerHorseData.id] = nil
     end
@@ -223,7 +214,6 @@ local function StartHorseMonitor(horse, horseData)
                 local reviveDeadline = GetGameTimer() + ConfigStables.Settings.HorseReviveTime
                 local tenSecondWarning = false
                 horseState.deathPending = true
-                TriggerServerEvent('nt_stables:server:beginHorseDeath', horseData.id)
                 RemoveHorseTarget()
                 lib.notify({
                     title = horseData.name .. ' has died.',
@@ -266,13 +256,12 @@ local function StartHorseMonitor(horse, horseData)
                     end
                     SetEntityHealth(horse, GetEntityMaxHealth(horse))
                     SetBlockingOfNonTemporaryEvents(horse, false)
-                    TriggerServerEvent('nt_stables:server:cancelHorseDeath', horseData.id)
                     SetupHorseTarget()
                     CreateHorseBlip(horse, horseData)
                 else
                     horseState.isSpawned = false
                     if horseState.dead and horseState.deathPending then
-                        TriggerServerEvent('nt_stables:server:finishHorseDeath', horseData.id)
+                        TriggerServerEvent('nt_stables:server:horseFailedRevive', horseData.id)
                     end
                     if state.horse[horseData.id] == horseState then state.horse[horseData.id] = nil end
                     ClearPlayerHorseState(horse)
@@ -288,11 +277,8 @@ local function StartHorseMonitor(horse, horseData)
 
         if state.horse[horseData.id] == horseState then
             horseState.isSpawned = false
-            if horseState.deathPending then
-                TriggerServerEvent(
-                    horseState.dead and 'nt_stables:server:finishHorseDeath' or 'nt_stables:server:cancelHorseDeath',
-                    horseData.id
-                )
+            if horseState.dead and horseState.deathPending then
+                TriggerServerEvent('nt_stables:server:horseFailedRevive', horseData.id)
             end
             state.horse[horseData.id] = nil
             if horseMonitorId == monitorId and PlayerHorse == horse then ClearPlayerHorseState(horse) end
@@ -369,6 +355,7 @@ local function CallPlayerHorse()
         [208] = true,
         [209] = true,
         [211] = true,
+        [274] = true,
         [277] = true,
         [297] = true,
         [300] = false,
@@ -381,6 +368,7 @@ local function CallPlayerHorse()
         [438] = false,
         [439] = false,
         [440] = false,
+        [442] = false,
         [561] = true,
     }
 
@@ -407,8 +395,6 @@ local function CallPlayerHorse()
         lib.notify({ title = 'The saved horse appearance could not be applied.', type = 'error', duration = 10000 })
         return
     end
-    Citizen.InvokeNative(0x5DA12E025D47D4E5, PlayerHorse, 16, tonumber(data.dirt) or 0)
-
     Citizen.InvokeNative(0xA3DB37EDF9A74635, PlayerId(), PlayerHorse, 28, 1, true)
     Citizen.InvokeNative(0xA3DB37EDF9A74635, PlayerId(), PlayerHorse, 35, 1, true)
     Citizen.InvokeNative(0xA3DB37EDF9A74635, PlayerId(), PlayerHorse, 45, 1, true)
@@ -434,6 +420,26 @@ RegisterNetEvent('nt_stables:client:callActiveStableRide', function()
     CallPlayerHorse()
 end)
 
+local function DismissPlayerHorse()
+    if PlayerHorse == 0 or not DoesEntityExist(PlayerHorse) or IsEntityDead(PlayerHorse) or PlayerHorseFleeing then return end
+
+    local fleeingHorse = PlayerHorse
+    PlayerHorseFleeing = true
+    ClearPedTasks(fleeingHorse)
+    TaskAnimalFlee(fleeingHorse, cache.ped, -1)
+
+    CreateThread(function()
+        Wait(5000)
+        if PlayerHorseFleeing and PlayerHorse == fleeingHorse then
+            DeletePlayerHorse()
+        end
+    end)
+end
+
+RegisterNetEvent('nt_stables:client:dismissActiveStableRide', function()
+    DismissPlayerHorse()
+end)
+
 CreateThread(function()
     while true do
         Wait(0)
@@ -452,33 +458,9 @@ CreateThread(function()
                     local promptType = string.unpack('<i4', eventData)
 
                     if promptType == 33 and not PlayerHorseFleeing then
-                        local fleeingHorse = PlayerHorse
-                        PlayerHorseFleeing = true
-                        ClearPedTasks(fleeingHorse)
-                        TaskAnimalFlee(fleeingHorse, cache.ped, -1)
-
-                        CreateThread(function()
-                            Wait(5000)
-                            if PlayerHorseFleeing and PlayerHorse == fleeingHorse then
-                                DeletePlayerHorse()
-                            end
-                        end)
+                        DismissPlayerHorse()
                     end
                 end
-            end
-        end
-    end
-end)
-
-CreateThread(function()
-    while true do
-        Wait(5000)
-
-        if PlayerHorse ~= 0 and DoesEntityExist(PlayerHorse) then
-            local dirt = Citizen.InvokeNative(0x147149F2E909323C, PlayerHorse, 16, Citizen.ResultAsInteger())
-            if dirt ~= lastDirt then
-                lastDirt = dirt
-                TriggerServerEvent('nt_stables:server:setHorseDirt', dirt)
             end
         end
     end

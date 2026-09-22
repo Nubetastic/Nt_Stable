@@ -274,6 +274,11 @@ RegisterNUICallback('registerWildHorse', function(data, cb)
     end
 
     local networkId = NetworkGetNetworkIdFromEntity(horse)
+    local appearance = NtHorseAppearance.Capture(horse)
+    if not appearance then
+        lib.notify({ title = 'The wild horse appearance could not be captured.', type = 'error', duration = 10000 })
+        return cb({ success = false })
+    end
     local result = lib.callback.await('nt_stables:server:registerWildHorse', false, {
         stable = registrationStable,
         networkId = networkId,
@@ -281,15 +286,12 @@ RegisterNUICallback('registerWildHorse', function(data, cb)
         name = name,
         gender = GetHorseGender(horse),
         nativeRanks = GetNativeRanks(horse),
+        appearance = appearance,
     })
 
     if not result or not result.success then
         lib.notify({ title = result and result.message or 'Unable to register this horse.', type = 'error', duration = 10000 })
         return cb({ success = false })
-    end
-
-    if not NtHorseAppearance.Save(result.horseId, horse) then
-        CreateThread(NtHorseAppearance.BackfillMissing)
     end
 
     tamedHorse = 0

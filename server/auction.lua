@@ -1,15 +1,15 @@
 local RSGCore = exports['rsg-core']:GetCoreObject()
 local HorseStats = lib.load('shared.horse_stats')
-local auctionLocks = {}
+local operationSequence = 0
 
 local function RoundMoney(value)
     return math.floor(((tonumber(value) or 0) * 100) + 0.5) / 100
 end
 
-local function DecodeHorse(data)
+local function DecodeData(data)
     if type(data) == 'table' then return data end
-    local success, horse = pcall(json.decode, data or '')
-    return success and horse or nil
+    local success, decoded = pcall(json.decode, data or '')
+    return success and decoded or nil
 end
 
 local function GetCharacterName(Player)
@@ -23,20 +23,13 @@ local function GetSlots(Player)
     return math.max(Config.StableSlots.Horse.DefaultSlots, math.floor(tonumber(stored.horse) or 0))
 end
 
-local function AddFunds(citizenid, amount, reason, listingId)
-    amount = RoundMoney(amount)
-    if amount <= 0 then return end
-    MySQL.insert.await([[INSERT INTO nt_stable_auction_funds (citizenid, amount, reason, listing_id)
-        VALUES (?, ?, ?, ?)]], { citizenid, amount, reason, listingId })
-end
-
 local function BuildHorse(horse)
     local base, stats, level = HorseStats.Calculate(horse)
     if not base then return end
 
     local modifiers = {}
     if horse.wild == 1 or horse.wild == true or horse.wild == '1' then
-        local decoded = DecodeHorse(horse.stat_modifiers)
+        local decoded = DecodeData(horse.stat_modifiers)
         modifiers = decoded and decoded.modifiers or {}
         if modifiers.strength == nil and modifiers.carry ~= nil then modifiers.strength = modifiers.carry end
     end
@@ -50,122 +43,180 @@ local function BuildHorse(horse)
     return horse
 end
 
-local function FinishExpiredListing(listing)
-    if auctionLocks[listing.id] then return end
-    auctionLocks[listing.id] = true
-
-    local changed = MySQL.update.await([[UPDATE nt_stable_horse_listings SET status = ?, completed_at = NOW()
-        WHERE id = ? AND status = 'active' AND expires_at <= NOW()]], {
-        listing.highest_bidder and 'sold' or 'expired', listing.id,
+local function NewOperation(operationType, citizenid, relatedId, amount, step)
+    operationSequence = operationSequence + 1
+    local operationId = ('%s:%s:%s:%s:%s'):format(operationType, citizenid, os.time(), GetGameTimer(), operationSequence)
+    local inserted = MySQL.insert.await([[INSERT INTO nt_stable_operations
+        (operation_id, operation_type, citizenid, related_id, amount, state, step)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?)]], {
+        operationId, operationType, citizenid, relatedId, amount, step,
     })
+    return inserted and operationId or nil
+end
 
-    if changed and changed > 0 then
-        local recipient = listing.highest_bidder or listing.seller_citizenid
-        local reason = listing.highest_bidder and 'auction_won' or 'expired'
-        local receivingId = MySQL.insert.await([[INSERT INTO nt_stable_horse_receiving
-            (listing_id, recipient_citizenid, reason, horse_data) VALUES (?, ?, ?, ?)]], {
-            listing.id, recipient, reason, listing.horse_data,
-        })
-        if not receivingId then
-            MySQL.update.await("UPDATE nt_stable_horse_listings SET status = 'active', completed_at = NULL WHERE id = ?", { listing.id })
-        elseif listing.highest_bidder then
-            local cut = RoundMoney((tonumber(listing.current_bid) or 0) * (Config.HorseAuction.StableCutPercent / 100))
-            AddFunds(listing.seller_citizenid, (tonumber(listing.current_bid) or 0) - cut, 'auction_sale', listing.id)
+local function UpdateOperation(operationId, state, step, context)
+    MySQL.update.await([[UPDATE nt_stable_operations SET state = ?, step = ?, context = ?
+        WHERE operation_id = ?]], { state, step, context and json.encode(context) or nil, operationId })
+end
+
+local function FinishOperation(operationId)
+    MySQL.update.await('DELETE FROM nt_stable_operations WHERE operation_id = ?', { operationId })
+end
+
+local function AddFundsQuery(citizenid, amount, reason, listingId)
+    return {
+        query = [[INSERT INTO nt_stable_auction_funds (citizenid, amount, reason, listing_id)
+            VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + VALUES(amount)]],
+        values = { citizenid, RoundMoney(amount), reason, listingId },
+    }
+end
+
+local function TryPayFund(citizenid, listingId, reason)
+    local Player
+    for _, playerId in ipairs(GetPlayers()) do
+        local onlinePlayer = RSGCore.Functions.GetPlayer(tonumber(playerId))
+        if onlinePlayer and onlinePlayer.PlayerData.citizenid == citizenid then
+            Player = onlinePlayer
+            break
         end
     end
+    if not Player then return false end
 
-    auctionLocks[listing.id] = nil
+    local fund = MySQL.single.await([[SELECT id, amount FROM nt_stable_auction_funds
+        WHERE citizenid = ? AND listing_id = ? AND reason = ?]], { citizenid, listingId, reason })
+    if not fund then return true end
+
+    local operationId = NewOperation('auction_fund_payment', citizenid, listingId, fund.amount, 'money_add')
+    if not operationId then return false end
+    local added = Player.Functions.AddMoney(Config.HorseAuction.MoneyType, tonumber(fund.amount))
+    if added == false then
+        UpdateOperation(operationId, 'needs_review', 'money_add_failed', { fund_id = fund.id })
+        return false
+    end
+
+    local deleted = MySQL.update.await('DELETE FROM nt_stable_auction_funds WHERE id = ?', { fund.id })
+    if deleted ~= 1 then
+        UpdateOperation(operationId, 'needs_review', 'fund_cleanup_failed', { fund_id = fund.id })
+        return false
+    end
+    FinishOperation(operationId)
+    return true
+end
+
+local LISTING_SELECT = [[SELECT listings.id AS listing_id, listings.horse_id,
+    listings.seller_citizenid, listings.seller_name, listings.listing_type, listings.status,
+    listings.price, listings.current_bid, listings.highest_bidder, listings.recipient_citizenid,
+    listings.claim_reason, listings.expires_at,
+    horses.id, horses.horseid, horses.citizenid, horses.name, horses.horse, horses.horsexp,
+    horses.components, horses.gender, horses.wild, horses.stat_modifiers, horses.appearance,
+    horses.active, horses.location,
+    TIMESTAMPDIFF(SECOND, NOW(), listings.expires_at) AS seconds_left
+    FROM nt_stable_horse_listings listings
+    INNER JOIN nt_stable_horses horses ON horses.id = listings.horse_id ]]
+
+local function FormatListing(row, tracked)
+    local horse = BuildHorse({
+        id = tonumber(row.id), horseid = row.horseid, citizenid = row.citizenid,
+        name = row.name, horse = row.horse, horsexp = tonumber(row.horsexp),
+        components = row.components, gender = row.gender, wild = row.wild,
+        stat_modifiers = row.stat_modifiers, appearance = row.appearance,
+        active = row.active, location = row.location,
+    })
+    if not horse then return end
+
+    return {
+        id = tonumber(row.listing_id),
+        listingType = row.listing_type,
+        price = tonumber(row.price),
+        currentBid = tonumber(row.current_bid),
+        sellerName = row.seller_name,
+        secondsLeft = math.max(0, tonumber(row.seconds_left) or 0),
+        horse = horse,
+        minimumBid = row.current_bid
+            and RoundMoney(tonumber(row.current_bid) + Config.HorseAuction.MinimumBidIncrease)
+            or tonumber(row.price),
+        tracked = tracked == true,
+    }
+end
+
+local function FinishExpiredListing(listing)
+    if listing.highest_bidder then
+        local amount = tonumber(listing.current_bid) or 0
+        local cut = RoundMoney(amount * (Config.HorseAuction.StableCutPercent / 100))
+        return MySQL.transaction.await({
+            {
+                query = [[UPDATE nt_stable_horse_listings SET status = 'awaiting_claim',
+                    recipient_citizenid = ?, claim_reason = 'auction_won'
+                    WHERE id = ? AND status = 'active' AND expires_at <= NOW()]],
+                values = { listing.highest_bidder, listing.id },
+            },
+            {
+                query = [[UPDATE nt_stable_horses SET citizenid = ?, active = 0
+                    WHERE id = ? AND citizenid = ? AND location = 'auction']],
+                values = { listing.highest_bidder, listing.horse_id, listing.seller_citizenid },
+            },
+            AddFundsQuery(listing.seller_citizenid, amount - cut, 'auction_sale', listing.id),
+        })
+    end
+
+    return MySQL.transaction.await({
+        {
+            query = [[UPDATE nt_stable_horse_listings SET status = 'awaiting_claim',
+                recipient_citizenid = ?, claim_reason = 'listing_expired'
+                WHERE id = ? AND status = 'active' AND expires_at <= NOW()]],
+            values = { listing.seller_citizenid, listing.id },
+        },
+    })
 end
 
 local function ProcessExpiredListings()
     local listings = MySQL.query.await([[SELECT * FROM nt_stable_horse_listings
         WHERE status = 'active' AND expires_at <= NOW()]])
-    for _, listing in ipairs(listings) do FinishExpiredListing(listing) end
+    for _, listing in ipairs(listings) do
+        local success = FinishExpiredListing(listing)
+        if not success then
+            LogSqlError('expire_auction_listing', listing.seller_citizenid, listing.horse_id,
+                'sql_transaction', 'Transaction failed', 'The listing remains unresolved for review.')
+        end
+    end
 end
 
 CreateThread(function()
-    MySQL.query.await([[CREATE TABLE IF NOT EXISTS nt_stable_horse_listings (
-        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-        seller_citizenid VARCHAR(50) NOT NULL,
-        seller_name VARCHAR(100) NOT NULL,
-        listing_type ENUM('direct', 'auction') NOT NULL,
-        status ENUM('active', 'sold', 'expired', 'cancelled') NOT NULL DEFAULT 'active',
-        price DECIMAL(12,2) NOT NULL,
-        current_bid DECIMAL(12,2) NULL,
-        highest_bidder VARCHAR(50) NULL,
-        listing_fee DECIMAL(12,2) NOT NULL,
-        horse_data LONGTEXT NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        expires_at TIMESTAMP NOT NULL,
-        completed_at TIMESTAMP NULL,
-        PRIMARY KEY (id), KEY status_expires (status, expires_at), KEY seller (seller_citizenid)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]])
-    MySQL.query.await([[CREATE TABLE IF NOT EXISTS nt_stable_horse_bids (
-        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-        listing_id INT UNSIGNED NOT NULL,
-        bidder_citizenid VARCHAR(50) NOT NULL,
-        amount DECIMAL(12,2) NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (id), KEY listing_id (listing_id), KEY bidder (bidder_citizenid)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]])
-    MySQL.query.await([[CREATE TABLE IF NOT EXISTS nt_stable_horse_tracking (
-        listing_id INT UNSIGNED NOT NULL,
-        citizenid VARCHAR(50) NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (listing_id, citizenid), KEY citizenid (citizenid)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]])
-    MySQL.query.await([[CREATE TABLE IF NOT EXISTS nt_stable_horse_receiving (
-        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-        listing_id INT UNSIGNED NOT NULL,
-        recipient_citizenid VARCHAR(50) NOT NULL,
-        reason VARCHAR(30) NOT NULL,
-        horse_data LONGTEXT NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        received_at TIMESTAMP NULL,
-        PRIMARY KEY (id), UNIQUE KEY listing_recipient (listing_id, recipient_citizenid),
-        KEY recipient (recipient_citizenid, received_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]])
-    MySQL.query.await([[CREATE TABLE IF NOT EXISTS nt_stable_auction_funds (
-        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-        citizenid VARCHAR(50) NOT NULL,
-        amount DECIMAL(12,2) NOT NULL,
-        reason VARCHAR(30) NOT NULL,
-        listing_id INT UNSIGNED NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        collected_at TIMESTAMP NULL,
-        PRIMARY KEY (id), KEY citizen_funds (citizenid, collected_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]])
-
-    ProcessExpiredListings()
+    Wait(1000)
     while true do
+        sqlAction('process_expired_auctions', 0, ProcessExpiredListings)
         Wait(Config.HorseAuction.ExpirationInterval * 1000)
-        ProcessExpiredListings()
     end
 end)
 
-lib.callback.register('nt_stables:server:getAuctionHome', function(source)
+RegisterSqlCallback('nt_stables:server:getAuctionHome', function(source)
     ProcessExpiredListings()
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return end
     local citizenid = Player.PlayerData.citizenid
     return {
-        selling = MySQL.scalar.await("SELECT COUNT(*) FROM nt_stable_horse_listings WHERE seller_citizenid = ? AND status = 'active'", { citizenid }) or 0,
-        receiving = MySQL.scalar.await('SELECT COUNT(*) FROM nt_stable_horse_receiving WHERE recipient_citizenid = ? AND received_at IS NULL', { citizenid }) or 0,
+        selling = MySQL.scalar.await([[SELECT COUNT(*) FROM nt_stable_horse_listings
+            WHERE seller_citizenid = ? AND status = 'active']], { citizenid }) or 0,
+        receiving = MySQL.scalar.await([[SELECT COUNT(*) FROM nt_stable_horse_listings
+            WHERE recipient_citizenid = ? AND status = 'awaiting_claim']], { citizenid }) or 0,
         tracking = MySQL.scalar.await([[SELECT COUNT(*) FROM nt_stable_horse_tracking tracking
             INNER JOIN nt_stable_horse_listings listings ON listings.id = tracking.listing_id
-            WHERE tracking.citizenid = ? AND listings.status = 'active' AND listings.listing_type = 'auction' AND listings.expires_at > NOW()]], { citizenid }) or 0,
-        funds = tonumber(MySQL.scalar.await('SELECT COALESCE(SUM(amount), 0) FROM nt_stable_auction_funds WHERE citizenid = ? AND collected_at IS NULL', { citizenid })) or 0,
+            WHERE tracking.citizenid = ? AND listings.status = 'active'
+                AND listings.listing_type = 'auction' AND listings.expires_at > NOW()]], { citizenid }) or 0,
+        funds = tonumber(MySQL.scalar.await([[SELECT COALESCE(SUM(amount), 0)
+            FROM nt_stable_auction_funds WHERE citizenid = ?]], { citizenid })) or 0,
     }
 end)
 
-lib.callback.register('nt_stables:server:getAuctionListings', function(source, listingType, filters)
+RegisterSqlCallback('nt_stables:server:getAuctionListings', function(source, listingType, filters)
     ProcessExpiredListings()
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player or (listingType ~= 'direct' and listingType ~= 'auction') then return {} end
 
     filters = type(filters) == 'table' and filters or {}
-    local rows = MySQL.query.await([[SELECT *, TIMESTAMPDIFF(SECOND, NOW(), expires_at) AS seconds_left FROM nt_stable_horse_listings
-        WHERE status = 'active' AND listing_type = ? AND seller_citizenid <> ? AND expires_at > NOW() ORDER BY expires_at ASC]], {
+    local rows = MySQL.query.await(LISTING_SELECT .. [[WHERE listings.status = 'active'
+        AND listings.listing_type = ? AND listings.seller_citizenid <> ?
+        AND listings.expires_at > NOW() ORDER BY listings.expires_at ASC]], {
         listingType, Player.PlayerData.citizenid,
     })
     local trackedRows = MySQL.query.await('SELECT listing_id FROM nt_stable_horse_tracking WHERE citizenid = ?', {
@@ -173,45 +224,35 @@ lib.callback.register('nt_stables:server:getAuctionListings', function(source, l
     })
     local tracked = {}
     for _, row in ipairs(trackedRows) do tracked[tonumber(row.listing_id)] = true end
+
     local result = {}
     for _, row in ipairs(rows) do
-        local horse = BuildHorse(DecodeHorse(row.horse_data))
+        local listing = FormatListing(row, tracked[tonumber(row.listing_id)])
+        local horse = listing and listing.horse
         local shownPrice = tonumber(row.current_bid) or tonumber(row.price) or 0
-        local minimumLevel = tonumber(filters.minimumLevel)
-        local maximumLevel = tonumber(filters.maximumLevel)
-        local minimumPrice = tonumber(filters.minimumPrice)
-        local maximumPrice = tonumber(filters.maximumPrice)
         local matches = horse
-            and (not minimumLevel or horse.level >= minimumLevel)
-            and (not maximumLevel or horse.level <= maximumLevel)
-            and (not minimumPrice or shownPrice >= minimumPrice)
-            and (not maximumPrice or shownPrice <= maximumPrice)
+            and (not tonumber(filters.minimumLevel) or horse.level >= tonumber(filters.minimumLevel))
+            and (not tonumber(filters.maximumLevel) or horse.level <= tonumber(filters.maximumLevel))
+            and (not tonumber(filters.minimumPrice) or shownPrice >= tonumber(filters.minimumPrice))
+            and (not tonumber(filters.maximumPrice) or shownPrice <= tonumber(filters.maximumPrice))
         for _, stat in ipairs(HorseStats.StatNames) do
             local minimum = tonumber(filters['minimum_' .. stat])
             local maximum = tonumber(filters['maximum_' .. stat])
             if horse and minimum and horse.stats[stat] < minimum then matches = false end
             if horse and maximum and horse.stats[stat] > maximum then matches = false end
         end
-        if matches then
-            result[#result + 1] = {
-                id = row.id, listingType = row.listing_type, price = tonumber(row.price),
-                currentBid = tonumber(row.current_bid), sellerName = row.seller_name,
-                secondsLeft = math.max(0, tonumber(row.seconds_left) or 0), horse = horse,
-                minimumBid = row.current_bid
-                    and RoundMoney(tonumber(row.current_bid) + Config.HorseAuction.MinimumBidIncrease)
-                    or tonumber(row.price),
-                tracked = tracked[tonumber(row.id)] == true,
-            }
-        end
+        if matches then result[#result + 1] = listing end
     end
     return result
 end)
 
-lib.callback.register('nt_stables:server:createAuctionListing', function(source, horseId, listingType, price, days)
+RegisterSqlCallback('nt_stables:server:createAuctionListing', function(source, horseId, listingType, price, days)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
     horseId, price, days = tonumber(horseId), RoundMoney(price), tonumber(days)
-    if listingType ~= 'direct' and listingType ~= 'auction' then return { success = false, message = 'Invalid listing type.' } end
+    if listingType ~= 'direct' and listingType ~= 'auction' then
+        return { success = false, message = 'Invalid listing type.' }
+    end
     if not days or days % 1 ~= 0 or days < Config.HorseAuction.MinimumDays or days > Config.HorseAuction.MaximumDays then
         return { success = false, message = 'Invalid listing duration.' }
     end
@@ -220,134 +261,168 @@ lib.callback.register('nt_stables:server:createAuctionListing', function(source,
     end
 
     local citizenid = Player.PlayerData.citizenid
-    local horse = MySQL.single.await('SELECT * FROM player_horses WHERE id = ? AND citizenid = ?', { horseId, citizenid })
+    local horse = MySQL.single.await([[SELECT * FROM nt_stable_horses
+        WHERE id = ? AND citizenid = ? AND location = 'stable']], { horseId, citizenid })
     if not horse then return { success = false, message = 'Horse not found.' } end
+
     local fee = RoundMoney(days * Config.HorseAuction.ListingFeePerDay)
+    local operationId = NewOperation('auction_listing_fee', citizenid, horseId, fee, 'money_remove')
+    if not operationId then return { success = false, message = 'The listing could not be started.' } end
     if not Player.Functions.RemoveMoney(Config.HorseAuction.MoneyType, fee) then
+        FinishOperation(operationId)
         return { success = false, message = ('You need $%.2f for the listing fee.'):format(fee) }
     end
 
     local prepared = exports[GetCurrentResourceName()]:PrepareHorseForAuction(source, horseId)
     if not prepared or not prepared.success then
         Player.Functions.AddMoney(Config.HorseAuction.MoneyType, fee)
+        FinishOperation(operationId)
         return prepared or { success = false, message = 'The horse could not be prepared for auction.' }
     end
 
-    local wasActive = horse.active == 1 or horse.active == true
-    local removed = MySQL.update.await('DELETE FROM player_horses WHERE id = ? AND citizenid = ?', { horseId, citizenid })
-    if not removed or removed < 1 then
-        Player.Functions.AddMoney(Config.HorseAuction.MoneyType, fee)
-        return { success = false, message = 'The horse could not be moved to the auction.' }
-    end
-    MySQL.update.await('DELETE FROM nt_stable_wagon_horses WHERE horse_id = ? AND citizenid = ?', { horseId, citizenid })
-    horse.active = 0
-    local listingId = MySQL.insert.await([[INSERT INTO nt_stable_horse_listings
-        (seller_citizenid, seller_name, listing_type, price, listing_fee, horse_data, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?))]], {
-        citizenid, GetCharacterName(Player), listingType, price, fee, json.encode(horse), os.time() + (days * 86400),
+    UpdateOperation(operationId, 'pending', 'sql_commit')
+    local success = MySQL.transaction.await({
+        {
+            query = [[INSERT INTO nt_stable_horse_listings
+                (horse_id, seller_citizenid, seller_name, listing_type, price, expires_at)
+                VALUES (?, ?, ?, ?, ?, FROM_UNIXTIME(?))]],
+            values = { horseId, citizenid, GetCharacterName(Player), listingType, price, os.time() + (days * 86400) },
+        },
+        { query = 'DELETE FROM nt_stable_wagon_horses WHERE horse_id = ? AND citizenid = ?', values = { horseId, citizenid } },
+        {
+            query = [[UPDATE nt_stable_horses SET location = 'auction', active = 0
+                WHERE id = ? AND citizenid = ? AND location = 'stable']],
+            values = { horseId, citizenid },
+        },
     })
-    if not listingId then
-        horse.citizenid = citizenid
-        MySQL.insert.await([[INSERT INTO player_horses
-            (id, stable, citizenid, horseid, name, horse, dirt, horsexp, components, gender, wild, stat_modifiers, appearance, active, born)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)]], {
-            horse.id, horse.stable, citizenid, horse.horseid, horse.name, horse.horse, horse.dirt,
-            horse.horsexp, horse.components, horse.gender, horse.wild, horse.stat_modifiers, horse.appearance, horse.born,
-        })
-        Player.Functions.AddMoney(Config.HorseAuction.MoneyType, fee)
+    if not success then
+        local refunded = Player.Functions.AddMoney(Config.HorseAuction.MoneyType, fee)
+        if refunded == false then
+            UpdateOperation(operationId, 'needs_review', 'money_refund_failed')
+        else
+            FinishOperation(operationId)
+        end
         return { success = false, message = 'The listing failed and your payment was refunded.' }
     end
 
-    return { success = true, listingId = listingId, wasActive = wasActive, clearedWagon = prepared.clearedWagon }
+    local listingId = MySQL.scalar.await('SELECT id FROM nt_stable_horse_listings WHERE horse_id = ?', { horseId })
+    if horse.active == 1 or horse.active == true then Player.Functions.SetMetaData('stable_active_horse', false) end
+    FinishOperation(operationId)
+    return { success = true, listingId = listingId, wasActive = horse.active == 1 or horse.active == true,
+        clearedWagon = prepared.clearedWagon }
 end)
 
-lib.callback.register('nt_stables:server:buyAuctionHorse', function(source, listingId)
+RegisterSqlCallback('nt_stables:server:buyAuctionHorse', function(source, listingId)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
     listingId = tonumber(listingId)
-    if auctionLocks[listingId] then return { success = false, message = 'This listing is being updated.' } end
-    auctionLocks[listingId] = true
-    local listing = MySQL.single.await("SELECT * FROM nt_stable_horse_listings WHERE id = ? AND status = 'active' AND listing_type = 'direct' AND expires_at > NOW()", { listingId })
+    local listing = MySQL.single.await([[SELECT * FROM nt_stable_horse_listings
+        WHERE id = ? AND status = 'active' AND listing_type = 'direct' AND expires_at > NOW()]], { listingId })
     if not listing or listing.seller_citizenid == Player.PlayerData.citizenid then
-        auctionLocks[listingId] = nil
         return { success = false, message = 'This horse is no longer available.' }
     end
+
     local price = tonumber(listing.price)
+    local citizenid = Player.PlayerData.citizenid
+    local operationId = NewOperation('auction_purchase', citizenid, listingId, price, 'money_remove')
+    if not operationId then return { success = false, message = 'The purchase could not be started.' } end
     if not Player.Functions.RemoveMoney(Config.HorseAuction.MoneyType, price) then
-        auctionLocks[listingId] = nil
+        FinishOperation(operationId)
         return { success = false, message = 'You do not have enough cash.' }
     end
-    local changed = MySQL.update.await("UPDATE nt_stable_horse_listings SET status = 'sold', completed_at = NOW() WHERE id = ? AND status = 'active'", { listingId })
-    if not changed or changed < 1 then
-        Player.Functions.AddMoney(Config.HorseAuction.MoneyType, price)
-        auctionLocks[listingId] = nil
-        return { success = false, message = 'Another player bought this horse first.' }
-    end
-    local receivingId = MySQL.insert.await([[INSERT INTO nt_stable_horse_receiving
-        (listing_id, recipient_citizenid, reason, horse_data) VALUES (?, ?, 'purchased', ?)]], {
-        listingId, Player.PlayerData.citizenid, listing.horse_data,
+
+    local cut = RoundMoney(price * (Config.HorseAuction.StableCutPercent / 100))
+    UpdateOperation(operationId, 'pending', 'sql_commit')
+    local success = MySQL.transaction.await({
+        {
+            query = [[UPDATE nt_stable_horse_listings SET status = 'awaiting_claim',
+                recipient_citizenid = ?, claim_reason = 'purchased'
+                WHERE id = ? AND status = 'active']],
+            values = { citizenid, listingId },
+        },
+        {
+            query = [[UPDATE nt_stable_horses SET citizenid = ?, active = 0
+                WHERE id = ? AND citizenid = ? AND location = 'auction']],
+            values = { citizenid, listing.horse_id, listing.seller_citizenid },
+        },
+        AddFundsQuery(listing.seller_citizenid, price - cut, 'direct_sale', listingId),
     })
-    if not receivingId then
-        MySQL.update.await("UPDATE nt_stable_horse_listings SET status = 'active', completed_at = NULL WHERE id = ? AND status = 'sold'", { listingId })
-        Player.Functions.AddMoney(Config.HorseAuction.MoneyType, price)
-        auctionLocks[listingId] = nil
+    if not success then
+        local refunded = Player.Functions.AddMoney(Config.HorseAuction.MoneyType, price)
+        if refunded == false then UpdateOperation(operationId, 'needs_review', 'money_refund_failed')
+        else FinishOperation(operationId) end
         return { success = false, message = 'The purchase failed and your payment was refunded.' }
     end
-    local cut = RoundMoney(price * (Config.HorseAuction.StableCutPercent / 100))
-    AddFunds(listing.seller_citizenid, price - cut, 'direct_sale', listingId)
-    auctionLocks[listingId] = nil
+    FinishOperation(operationId)
     return { success = true }
 end)
 
-lib.callback.register('nt_stables:server:placeAuctionBid', function(source, listingId, amount)
+RegisterSqlCallback('nt_stables:server:placeAuctionBid', function(source, listingId, amount)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
     listingId, amount = tonumber(listingId), RoundMoney(amount)
-    if auctionLocks[listingId] then return { success = false, message = 'This auction is being updated.' } end
-    auctionLocks[listingId] = true
-    local listing = MySQL.single.await("SELECT * FROM nt_stable_horse_listings WHERE id = ? AND status = 'active' AND listing_type = 'auction' AND expires_at > NOW()", { listingId })
+    local listing = MySQL.single.await([[SELECT * FROM nt_stable_horse_listings
+        WHERE id = ? AND status = 'active' AND listing_type = 'auction' AND expires_at > NOW()]], { listingId })
     if not listing or listing.seller_citizenid == Player.PlayerData.citizenid then
-        auctionLocks[listingId] = nil
         return { success = false, message = 'This auction is no longer available.' }
     end
+
     local minimum = listing.current_bid
         and RoundMoney(tonumber(listing.current_bid) + Config.HorseAuction.MinimumBidIncrease)
         or tonumber(listing.price)
     if amount < minimum or amount > Config.HorseAuction.MaximumPrice then
-        auctionLocks[listingId] = nil
         return { success = false, message = ('The minimum bid is $%.2f.'):format(minimum) }
     end
+
     local citizenid = Player.PlayerData.citizenid
     local previousOwnBid = listing.highest_bidder == citizenid and tonumber(listing.current_bid) or 0
     local charge = RoundMoney(amount - previousOwnBid)
+    local operationId = NewOperation('auction_bid', citizenid, listingId, charge, 'money_remove')
+    if not operationId then return { success = false, message = 'The bid could not be started.' } end
     if not Player.Functions.RemoveMoney(Config.HorseAuction.MoneyType, charge) then
-        auctionLocks[listingId] = nil
+        FinishOperation(operationId)
         return { success = false, message = 'You do not have enough cash.' }
     end
+
+    local statements = {
+        {
+            query = [[UPDATE nt_stable_horse_listings SET current_bid = ?, highest_bidder = ?
+                WHERE id = ? AND status = 'active']],
+            values = { amount, citizenid, listingId },
+        },
+        {
+            query = 'INSERT IGNORE INTO nt_stable_horse_tracking (listing_id, citizenid) VALUES (?, ?)',
+            values = { listingId, citizenid },
+        },
+    }
     if listing.highest_bidder and listing.highest_bidder ~= citizenid then
-        AddFunds(listing.highest_bidder, listing.current_bid, 'outbid_refund', listingId)
+        statements[#statements + 1] = AddFundsQuery(
+            listing.highest_bidder, listing.current_bid, 'outbid_refund', listingId)
     end
-    MySQL.update.await('UPDATE nt_stable_horse_listings SET current_bid = ?, highest_bidder = ? WHERE id = ? AND status = ?', {
-        amount, citizenid, listingId, 'active',
-    })
-    MySQL.insert.await('INSERT INTO nt_stable_horse_bids (listing_id, bidder_citizenid, amount) VALUES (?, ?, ?)', {
-        listingId, citizenid, amount,
-    })
-    MySQL.insert.await('INSERT IGNORE INTO nt_stable_horse_tracking (listing_id, citizenid) VALUES (?, ?)', {
-        listingId, citizenid,
-    })
-    auctionLocks[listingId] = nil
+
+    UpdateOperation(operationId, 'pending', 'sql_commit')
+    local success = MySQL.transaction.await(statements)
+    if not success then
+        local refunded = Player.Functions.AddMoney(Config.HorseAuction.MoneyType, charge)
+        if refunded == false then UpdateOperation(operationId, 'needs_review', 'money_refund_failed')
+        else FinishOperation(operationId) end
+        return { success = false, message = 'The bid failed and your payment was refunded.' }
+    end
+
+    FinishOperation(operationId)
+    if listing.highest_bidder and listing.highest_bidder ~= citizenid then
+        TryPayFund(listing.highest_bidder, listingId, 'outbid_refund')
+    end
     return { success = true }
 end)
 
-lib.callback.register('nt_stables:server:trackAuction', function(source, listingId)
+RegisterSqlCallback('nt_stables:server:trackAuction', function(source, listingId)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
     listingId = tonumber(listingId)
     local listing = MySQL.single.await([[SELECT id FROM nt_stable_horse_listings
-        WHERE id = ? AND seller_citizenid <> ? AND listing_type = 'auction' AND status = 'active' AND expires_at > NOW()]], {
-        listingId, Player.PlayerData.citizenid,
-    })
+        WHERE id = ? AND seller_citizenid <> ? AND listing_type = 'auction'
+            AND status = 'active' AND expires_at > NOW()]], { listingId, Player.PlayerData.citizenid })
     if not listing then return { success = false, message = 'This auction is no longer available.' } end
     MySQL.insert.await('INSERT IGNORE INTO nt_stable_horse_tracking (listing_id, citizenid) VALUES (?, ?)', {
         listingId, Player.PlayerData.citizenid,
@@ -355,7 +430,7 @@ lib.callback.register('nt_stables:server:trackAuction', function(source, listing
     return { success = true }
 end)
 
-lib.callback.register('nt_stables:server:untrackAuction', function(source, listingId)
+RegisterSqlCallback('nt_stables:server:untrackAuction', function(source, listingId)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
     MySQL.update.await('DELETE FROM nt_stable_horse_tracking WHERE listing_id = ? AND citizenid = ?', {
@@ -364,136 +439,128 @@ lib.callback.register('nt_stables:server:untrackAuction', function(source, listi
     return { success = true }
 end)
 
-lib.callback.register('nt_stables:server:getTrackedAuctions', function(source)
+RegisterSqlCallback('nt_stables:server:getTrackedAuctions', function(source)
     ProcessExpiredListings()
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return {} end
-    local rows = MySQL.query.await([[SELECT listings.*, TIMESTAMPDIFF(SECOND, NOW(), listings.expires_at) AS seconds_left
-        FROM nt_stable_horse_tracking tracking
-        INNER JOIN nt_stable_horse_listings listings ON listings.id = tracking.listing_id
-        WHERE tracking.citizenid = ? AND listings.status = 'active' AND listings.listing_type = 'auction'
-            AND listings.expires_at > NOW() ORDER BY listings.expires_at ASC]], { Player.PlayerData.citizenid })
+    local rows = MySQL.query.await(LISTING_SELECT .. [[INNER JOIN nt_stable_horse_tracking tracking
+        ON tracking.listing_id = listings.id WHERE tracking.citizenid = ?
+        AND listings.status = 'active' AND listings.listing_type = 'auction'
+        AND listings.expires_at > NOW() ORDER BY listings.expires_at ASC]], { Player.PlayerData.citizenid })
     local result = {}
     for _, row in ipairs(rows) do
-        local horse = BuildHorse(DecodeHorse(row.horse_data))
-        if horse then
-            result[#result + 1] = {
-                id = row.id, listingType = 'auction', price = tonumber(row.price), currentBid = tonumber(row.current_bid),
-                sellerName = row.seller_name, secondsLeft = math.max(0, tonumber(row.seconds_left) or 0), horse = horse,
-                minimumBid = row.current_bid
-                    and RoundMoney(tonumber(row.current_bid) + Config.HorseAuction.MinimumBidIncrease)
-                    or tonumber(row.price),
-                tracked = true,
-            }
-        end
+        local listing = FormatListing(row, true)
+        if listing then result[#result + 1] = listing end
     end
     return result
 end)
 
-lib.callback.register('nt_stables:server:getHeldHorses', function(source)
+RegisterSqlCallback('nt_stables:server:getHeldHorses', function(source)
     ProcessExpiredListings()
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return end
     local citizenid = Player.PlayerData.citizenid
-    local sellingRows = MySQL.query.await("SELECT *, TIMESTAMPDIFF(SECOND, NOW(), expires_at) AS seconds_left FROM nt_stable_horse_listings WHERE seller_citizenid = ? AND status = 'active' ORDER BY expires_at", { citizenid })
-    local receivingRows = MySQL.query.await('SELECT * FROM nt_stable_horse_receiving WHERE recipient_citizenid = ? AND received_at IS NULL ORDER BY created_at', { citizenid })
+    local sellingRows = MySQL.query.await(LISTING_SELECT .. [[WHERE listings.seller_citizenid = ?
+        AND listings.status = 'active' ORDER BY listings.expires_at]], { citizenid })
+    local receivingRows = MySQL.query.await(LISTING_SELECT .. [[WHERE listings.recipient_citizenid = ?
+        AND listings.status = 'awaiting_claim' ORDER BY listings.id]], { citizenid })
     local selling, receiving = {}, {}
     for _, row in ipairs(sellingRows) do
-        selling[#selling + 1] = { id = row.id, listingType = row.listing_type, price = tonumber(row.price), currentBid = tonumber(row.current_bid), secondsLeft = math.max(0, tonumber(row.seconds_left) or 0), horse = BuildHorse(DecodeHorse(row.horse_data)) }
+        local listing = FormatListing(row, false)
+        if listing then selling[#selling + 1] = listing end
     end
     for _, row in ipairs(receivingRows) do
-        receiving[#receiving + 1] = { id = row.id, reason = row.reason, horse = BuildHorse(DecodeHorse(row.horse_data)) }
+        local listing = FormatListing(row, false)
+        if listing then receiving[#receiving + 1] = {
+            id = listing.id, reason = row.claim_reason, horse = listing.horse,
+        } end
     end
     return {
-        selling = selling, receiving = receiving,
-        funds = tonumber(MySQL.scalar.await('SELECT COALESCE(SUM(amount), 0) FROM nt_stable_auction_funds WHERE citizenid = ? AND collected_at IS NULL', { citizenid })) or 0,
+        selling = selling,
+        receiving = receiving,
+        funds = tonumber(MySQL.scalar.await([[SELECT COALESCE(SUM(amount), 0)
+            FROM nt_stable_auction_funds WHERE citizenid = ?]], { citizenid })) or 0,
     }
 end)
 
-lib.callback.register('nt_stables:server:cancelAuctionListing', function(source, listingId)
+RegisterSqlCallback('nt_stables:server:cancelAuctionListing', function(source, listingId)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
     listingId = tonumber(listingId)
-    if auctionLocks[listingId] then return { success = false, message = 'This listing is being updated.' } end
-    auctionLocks[listingId] = true
-    local listing = MySQL.single.await("SELECT * FROM nt_stable_horse_listings WHERE id = ? AND seller_citizenid = ? AND status = 'active'", { listingId, Player.PlayerData.citizenid })
-    if not listing then
-        auctionLocks[listingId] = nil
-        return { success = false, message = 'This listing can no longer be cancelled.' }
+    local citizenid = Player.PlayerData.citizenid
+    local listing = MySQL.single.await([[SELECT * FROM nt_stable_horse_listings
+        WHERE id = ? AND seller_citizenid = ? AND status = 'active']], { listingId, citizenid })
+    if not listing then return { success = false, message = 'This listing can no longer be cancelled.' } end
+
+    local statements = {
+        {
+            query = [[UPDATE nt_stable_horse_listings SET status = 'awaiting_claim',
+                recipient_citizenid = ?, claim_reason = 'listing_cancelled'
+                WHERE id = ? AND status = 'active']],
+            values = { citizenid, listingId },
+        },
+    }
+    if listing.highest_bidder then
+        statements[#statements + 1] = AddFundsQuery(
+            listing.highest_bidder, listing.current_bid, 'cancelled_refund', listingId)
     end
-    local changed = MySQL.update.await("UPDATE nt_stable_horse_listings SET status = 'cancelled', completed_at = NOW() WHERE id = ? AND status = 'active'", { listingId })
-    if changed and changed > 0 then
-        local receivingId = MySQL.insert.await([[INSERT INTO nt_stable_horse_receiving
-            (listing_id, recipient_citizenid, reason, horse_data) VALUES (?, ?, 'cancelled', ?)]], {
-            listingId, Player.PlayerData.citizenid, listing.horse_data,
-        })
-        if not receivingId then
-            MySQL.update.await("UPDATE nt_stable_horse_listings SET status = 'active', completed_at = NULL WHERE id = ? AND status = 'cancelled'", { listingId })
-            auctionLocks[listingId] = nil
-            return { success = false, message = 'The horse could not be returned. The listing remains active.' }
-        end
-        if listing.highest_bidder then AddFunds(listing.highest_bidder, listing.current_bid, 'cancelled_refund', listingId) end
+    local success = MySQL.transaction.await(statements)
+    if success and listing.highest_bidder then
+        TryPayFund(listing.highest_bidder, listingId, 'cancelled_refund')
     end
-    auctionLocks[listingId] = nil
-    return { success = changed and changed > 0 }
+    return { success = success == true }
 end)
 
-lib.callback.register('nt_stables:server:receiveAuctionHorse', function(source, receiveId)
+RegisterSqlCallback('nt_stables:server:receiveAuctionHorse', function(source, listingId)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
-    receiveId = tonumber(receiveId)
-    if auctionLocks['receive_' .. tostring(receiveId)] then return { success = false, message = 'This horse is being received.' } end
-    auctionLocks['receive_' .. tostring(receiveId)] = true
+    listingId = tonumber(listingId)
     local citizenid = Player.PlayerData.citizenid
-    local held = MySQL.single.await('SELECT * FROM nt_stable_horse_receiving WHERE id = ? AND recipient_citizenid = ? AND received_at IS NULL', { receiveId, citizenid })
-    if not held then
-        auctionLocks['receive_' .. tostring(receiveId)] = nil
-        return { success = false, message = 'Horse not found.' }
-    end
-    local count = tonumber(MySQL.scalar.await('SELECT COUNT(*) FROM player_horses WHERE citizenid = ?', { citizenid })) or 0
+    local listing = MySQL.single.await([[SELECT listings.id, listings.horse_id FROM nt_stable_horse_listings listings
+        INNER JOIN nt_stable_horses horses ON horses.id = listings.horse_id
+        WHERE listings.id = ? AND listings.recipient_citizenid = ? AND listings.status = 'awaiting_claim'
+            AND horses.citizenid = ? AND horses.location = 'auction']], { listingId, citizenid, citizenid })
+    if not listing then return { success = false, message = 'Horse not found.' } end
+
+    local count = tonumber(MySQL.scalar.await([[SELECT COUNT(*) FROM nt_stable_horses
+        WHERE citizenid = ? AND location = 'stable']], { citizenid })) or 0
     if count >= GetSlots(Player) then
-        auctionLocks['receive_' .. tostring(receiveId)] = nil
-        return { success = false, message = 'You need an empty horse slot.' }
+        return { success = false, message = 'You need a free horse slot before you can stable this horse.' }
     end
-    local horse = DecodeHorse(held.horse_data)
-    local claimed = MySQL.update.await('UPDATE nt_stable_horse_receiving SET received_at = NOW() WHERE id = ? AND received_at IS NULL', { receiveId })
-    if not claimed or claimed < 1 then
-        auctionLocks['receive_' .. tostring(receiveId)] = nil
-        return { success = false, message = 'This horse has already been received.' }
-    end
-    local inserted = MySQL.insert.await([[INSERT INTO player_horses
-        (stable, citizenid, horseid, name, horse, dirt, horsexp, components, gender, wild, stat_modifiers, appearance, active, born)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)]], {
-        horse.stable, citizenid, horse.horseid, horse.name, horse.horse, horse.dirt, horse.horsexp,
-        horse.components, horse.gender, horse.wild, horse.stat_modifiers, horse.appearance, horse.born,
+
+    local success = MySQL.transaction.await({
+        {
+            query = [[UPDATE nt_stable_horses SET location = 'stable', active = 0
+                WHERE id = ? AND citizenid = ? AND location = 'auction']],
+            values = { listing.horse_id, citizenid },
+        },
+        { query = 'DELETE FROM nt_stable_horse_listings WHERE id = ? AND status = ?', values = { listingId, 'awaiting_claim' } },
     })
-    if not inserted then
-        MySQL.update.await('UPDATE nt_stable_horse_receiving SET received_at = NULL WHERE id = ?', { receiveId })
-        auctionLocks['receive_' .. tostring(receiveId)] = nil
-        return { success = false, message = 'The horse could not be added to your stable.' }
-    end
-    auctionLocks['receive_' .. tostring(receiveId)] = nil
-    return { success = true, horseId = inserted }
+    if not success then return { success = false, message = 'The horse could not be added to your stable.' } end
+    return { success = true, horseId = tonumber(listing.horse_id) }
 end)
 
-lib.callback.register('nt_stables:server:collectAuctionFunds', function(source)
+RegisterSqlCallback('nt_stables:server:collectAuctionFunds', function(source)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return { success = false, message = 'Player not found.' } end
     local citizenid = Player.PlayerData.citizenid
-    local lockId = 'funds_' .. citizenid
-    if auctionLocks[lockId] then return { success = false, message = 'Your auction funds are being collected.' } end
-    auctionLocks[lockId] = true
-    local amount = tonumber(MySQL.scalar.await('SELECT COALESCE(SUM(amount), 0) FROM nt_stable_auction_funds WHERE citizenid = ? AND collected_at IS NULL', { citizenid })) or 0
-    if amount <= 0 then
-        auctionLocks[lockId] = nil
-        return { success = false, message = 'You have no auction funds to collect.' }
-    end
-    local changed = MySQL.update.await('UPDATE nt_stable_auction_funds SET collected_at = NOW() WHERE citizenid = ? AND collected_at IS NULL', { citizenid })
-    if not changed or changed < 1 then
-        auctionLocks[lockId] = nil
+    local amount = tonumber(MySQL.scalar.await([[SELECT COALESCE(SUM(amount), 0)
+        FROM nt_stable_auction_funds WHERE citizenid = ?]], { citizenid })) or 0
+    if amount <= 0 then return { success = false, message = 'You have no auction funds to collect.' } end
+
+    local operationId = NewOperation('collect_auction_funds', citizenid, nil, amount, 'money_add')
+    if not operationId then return { success = false, message = 'Auction funds could not be collected.' } end
+    local added = Player.Functions.AddMoney(Config.HorseAuction.MoneyType, amount)
+    if added == false then
+        UpdateOperation(operationId, 'needs_review', 'money_add_failed')
         return { success = false, message = 'Auction funds could not be collected.' }
     end
-    Player.Functions.AddMoney(Config.HorseAuction.MoneyType, amount)
-    auctionLocks[lockId] = nil
+
+    local deleted = MySQL.update.await('DELETE FROM nt_stable_auction_funds WHERE citizenid = ?', { citizenid })
+    if not deleted or deleted < 1 then
+        UpdateOperation(operationId, 'needs_review', 'fund_cleanup_failed')
+        return { success = false, message = 'Funds were paid, but SQL cleanup requires administrator review.' }
+    end
+    FinishOperation(operationId)
     return { success = true, amount = amount }
 end)

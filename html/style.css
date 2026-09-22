@@ -630,6 +630,10 @@ body {
     margin: auto 0 0;
 }
 
+.stable-sale-actions {
+    grid-template-columns: 1fr;
+}
+
 footer[data-manage-main] {
     margin-top: 0;
 }
