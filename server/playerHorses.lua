@@ -147,24 +147,6 @@ local function GetStableSlots(Player)
     }
 end
 
-function UpdateFreeHorseStableSlots(source, Player, horseCount)
-    Player = Player or RSGCore.Functions.GetPlayer(source)
-    if not Player then return end
-
-    horseCount = tonumber(horseCount) or MySQL.scalar.await(
-        "SELECT COUNT(*) FROM nt_stable_horses WHERE citizenid = ? AND location = 'stable'",
-        { Player.PlayerData.citizenid }
-    )
-    local slots = GetStableSlots(Player)
-    local freeSlots = math.max(0, slots.horse - horseCount)
-    TriggerClientEvent('nt_stables:client:setFreeHorseStableSlots', source, freeSlots)
-    return freeSlots
-end
-
-RegisterSqlEvent('nt_stables:server:requestFreeHorseStableSlots', function(source)
-    UpdateFreeHorseStableSlots(source)
-end)
-
 local function GetSlotPrice(slotType, slotNumber)
     local slotConfig = slotType == 'horse' and Config.StableSlots.Horse or Config.StableSlots.Wagon
     return slotConfig.BaseSlotPrice * (Config.StableSlots.AdditionalSlotMultiplier ^ (slotNumber - 1))
@@ -204,7 +186,6 @@ local function GetWildHorseRegistrationCosts(Player)
         slotRequired = slotRequired,
         total = total,
         slots = slots,
-        horseCount = horseCount,
     }
 end
 
@@ -605,12 +586,10 @@ RegisterSqlCallback('nt_stables:server:getActiveHorse', function(source)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then return end
 
-    local horse = MySQL.single.await("SELECT * FROM nt_stable_horses WHERE citizenid = ? AND active = ? AND location = 'stable'", {
+    return MySQL.single.await("SELECT * FROM nt_stable_horses WHERE citizenid = ? AND active = ? AND location = 'stable'", {
         Player.PlayerData.citizenid,
         1,
     })
-    if horse then horse.sellPrice = GetSellPrice(horse) end
-    return horse
 end)
 
 RegisterSqlCallback('nt_stables:server:getPlayerHorses', function(source)
@@ -748,7 +727,6 @@ RegisterSqlCallback('nt_stables:server:registerWildHorse', function(source, data
         Player.Functions.SetMetaData('stable_slots', costs.slots)
     end
 
-    UpdateFreeHorseStableSlots(source, Player, costs.horseCount + 1)
     wildHorsePlayerLocks[source] = nil
     return {
         success = true,
@@ -822,7 +800,6 @@ RegisterSqlCallback('nt_stables:server:changeStableSlots', function(source, slot
 
     local data = GetStableManagerData(Player, slots)
     data.success = true
-    if slotType == 'horse' then UpdateFreeHorseStableSlots(source, Player, owned) end
     return data
 end)
 
@@ -1310,7 +1287,6 @@ RegisterSqlCallback('nt_stables:server:buyHorse', function(source, stableName, m
     end
 
     Player.Functions.SetMetaData('stable_active_ride', { type = 'horse' })
-    local freeHorseStableSlots = UpdateFreeHorseStableSlots(source, Player, horseCount + 1)
 
     local savedHorse = MySQL.single.await("SELECT * FROM nt_stable_horses WHERE id = ? AND citizenid = ? AND location = 'stable'", {
         databaseId,
@@ -1318,12 +1294,7 @@ RegisterSqlCallback('nt_stables:server:buyHorse', function(source, stableName, m
     })
     savedHorse.isWagonHorse = false
     savedHorse.sellPrice = GetSellPrice(savedHorse)
-    return {
-        success = true,
-        horseId = databaseId,
-        horse = savedHorse,
-        freeHorseStableSlots = freeHorseStableSlots,
-    }
+    return { success = true, horseId = databaseId, horse = savedHorse }
 end)
 
 local function ChargeStableFee(Player)
@@ -1518,7 +1489,6 @@ RegisterSqlCallback('nt_stables:server:sellHorse', function(source, horseId)
     local clearedWagon = ClearIncompleteActiveWagon(Player)
 
     Player.Functions.AddMoney('cash', sellPrice)
-    UpdateFreeHorseStableSlots(source, Player)
 
     return {
         price = sellPrice,
@@ -1790,7 +1760,6 @@ RegisterSqlEvent('nt_stables:server:horseFailedRevive', function(src, horseId)
         Player.Functions.SetMetaData('stable_active_horse', false)
     end
     ClearIncompleteActiveWagon(Player)
-    UpdateFreeHorseStableSlots(src, Player)
     TriggerClientEvent('ox_lib:notify', src, {
         title = horse.name .. ' has permanently died.',
         type = 'error',

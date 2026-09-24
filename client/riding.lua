@@ -56,7 +56,7 @@ function ShowOwnedHorseInfo(horseData, returnToManager)
         model = horseData.horse,
         breed = base.breed,
         tameLevel = level,
-        price = horseData.sellPrice,
+        price = base.price,
         health = finalStats.health,
         stamina = finalStats.stamina,
         agility = finalStats.agility,

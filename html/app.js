@@ -7,34 +7,21 @@ const wildRegisterCard = document.querySelector('.wild-register-card');
 const manageCard = document.querySelector('.manage-card');
 const buyButton = document.getElementById('buy');
 const wildRegisterConfirm = document.getElementById('wild-register-confirm');
-const scaleMenu = document.getElementById('scale-menu');
-const scaleSlider = document.getElementById('scale-slider');
-const scaleValue = document.getElementById('scale-value');
-const textScaleSlider = document.getElementById('text-scale-slider');
-const textScaleValue = document.getElementById('text-scale-value');
-const legacyScaleInputs = document.querySelectorAll('[data-ui-scale]');
-const legacyScaleValues = document.querySelectorAll('[data-scale-value]');
+const scaleInputs = document.querySelectorAll('[data-ui-scale]');
+const scaleValues = document.querySelectorAll('[data-scale-value]');
 const cameraZoom = document.getElementById('camera-zoom');
 const horseList = document.getElementById('horse-list');
 const wagonList = document.getElementById('wagon-list');
 const buyModal = document.getElementById('buy-modal');
-const buyModalContent = buyModal.querySelector('.modal-content');
-const buyForm = document.getElementById('buy-form');
-const buyProcessing = document.getElementById('buy-processing');
 const customizePanel = document.getElementById('customize-panel');
 const wagonCustomizePanel = document.getElementById('wagon-customize-panel');
 const wagonHorsesPanel = document.getElementById('wagon-horses-panel');
 const customizeCategories = document.getElementById('customize-categories');
 const scaleStorageKey = 'nt_stables_ui_scale_v2';
-const textScaleStorageKey = 'nt_stables_text_scale';
 const baseUiScale = 1.25;
 const manageBaseWidth = 560;
 const customizeBaseScale = Number(getComputedStyle(document.documentElement).getPropertyValue('--customize-base-scale')) || 1;
 const defaultUiScale = 1;
-const scaledText = [...horseCard.querySelectorAll('*'), ...manageCard.querySelectorAll('*')].map((element) => ({
-    element,
-    fontSize: Number.parseFloat(getComputedStyle(element).fontSize),
-}));
 let managedHorses = [];
 let managedWagons = [];
 let rotatingCamera = false;
@@ -73,24 +60,16 @@ const postNui = (callback, data = {}) => fetch(`https://${GetParentResourceName(
 });
 
 const applyScale = (value) => {
-    const scale = Math.min(Number(scaleSlider.max) / 100, Math.max(Number(scaleSlider.min) / 100, Number(value) / 100));
+    const maximum = Number(scaleInputs[0].max);
+    const scale = Math.min(maximum, Math.max(0.5, Number(value)));
     document.documentElement.style.setProperty('--horse-ui-scale', scale * baseUiScale);
     document.documentElement.style.setProperty('--manage-ui-scale', scale);
     document.documentElement.style.setProperty('--customize-ui-scale', scale * customizeBaseScale);
     document.documentElement.style.setProperty('--manage-panel-width', `${manageBaseWidth * scale}px`);
     document.documentElement.style.setProperty('--manage-content-height', `${window.innerHeight / scale}px`);
-    scaleSlider.value = Math.floor(scale * 100);
-    scaleValue.textContent = `${scaleSlider.value}%`;
-    legacyScaleInputs.forEach((input) => { input.value = scale.toFixed(2); });
-    legacyScaleValues.forEach((output) => { output.textContent = `${scaleSlider.value}%`; });
+    scaleInputs.forEach((input) => { input.value = scale.toFixed(2); });
+    scaleValues.forEach((output) => { output.textContent = `${Math.round(scale * 100)}%`; });
     localStorage.setItem(scaleStorageKey, scale);
-};
-
-const applyTextScale = (value) => {
-    const scale = Number(value) / 100;
-    scaledText.forEach((text) => { text.element.style.fontSize = `${text.fontSize * scale}px`; });
-    textScaleValue.textContent = `${value}%`;
-    localStorage.setItem(textScaleStorageKey, scale);
 };
 
 const updateScaleLimit = () => {
@@ -98,24 +77,17 @@ const updateScaleLimit = () => {
     const wildRegisterVisible = wildRegisterWindow.classList.contains('visible');
     const card = horseVisible ? horseCard : wildRegisterVisible ? wildRegisterCard : manageCard;
     const cardBaseScale = horseVisible || wildRegisterVisible ? baseUiScale : manageCard.classList.contains('customizing') ? customizeBaseScale : 1;
-    const widthScale = (window.innerWidth - 48) / ((horseVisible || wildRegisterVisible ? card.offsetWidth : manageBaseWidth) * cardBaseScale);
-    const heightScale = (window.innerHeight - 48) / (card.offsetHeight * cardBaseScale);
-    const viewportMax = horseVisible || wildRegisterVisible ? Math.min(1.25, widthScale, heightScale) : Math.min(1.25, widthScale);
-    const maxScale = Math.max(0.75, Math.floor(viewportMax * 100) / 100);
+    const widthScale = (window.innerWidth * 0.94) / ((horseVisible || wildRegisterVisible ? card.offsetWidth : manageBaseWidth) * cardBaseScale);
+    const heightScale = (window.innerHeight * 0.94) / (card.offsetHeight * cardBaseScale);
+    const viewportMax = horseVisible || wildRegisterVisible ? Math.min(2, widthScale, heightScale) : Math.min(2, widthScale);
+    const maxScale = Math.max(0.5, Math.floor((viewportMax + Number.EPSILON) / 0.05) * 0.05);
 
-    scaleSlider.max = Math.floor(maxScale * 100);
-    legacyScaleInputs.forEach((input) => { input.max = maxScale.toFixed(2); });
-    applyScale(scaleSlider.value);
+    scaleInputs.forEach((input) => { input.max = maxScale.toFixed(2); });
+    applyScale(scaleInputs[0].value);
 };
 
 const savedScale = Number(localStorage.getItem(scaleStorageKey));
-const savedTextScale = Number(localStorage.getItem(textScaleStorageKey));
-scaleSlider.value = Math.round((savedScale >= 0.75 ? savedScale : defaultUiScale) * 100);
-textScaleSlider.value = Math.round((savedTextScale >= 0.75 ? savedTextScale : 1) * 100);
-applyScale(scaleSlider.value);
-applyTextScale(textScaleSlider.value);
-
-const closeScaleMenu = () => { scaleMenu.hidden = true; };
+applyScale(savedScale >= 0.5 ? savedScale : defaultUiScale);
 
 const closeHorse = () => postNui('closeHorse');
 const closeWildHorseRegistration = () => postNui('closeWildHorseRegistration');
@@ -244,29 +216,17 @@ const renderAuctionHorseDetails = (container, horse, extraLines = []) => {
         label.textContent = stat.charAt(0).toUpperCase() + stat.slice(1);
         const value = document.createElement('strong');
         value.textContent = `${horse.stats[stat]}${wildModifierText(horse, stat)}`;
-        const progress = document.createElement('div');
-        progress.className = 'auction-stat-progress';
-        progress.setAttribute('aria-label', `${label.textContent}: ${horse.stats[stat]} of 9`);
-        for (let rank = 1; rank <= 9; rank += 1) {
-            const segment = document.createElement('span');
-            if (rank <= Number(horse.stats[stat])) segment.className = 'filled';
-            progress.append(segment);
-        }
-        stats.append(label, value, progress);
+        stats.append(label, value);
     });
     const carryLabel = document.createElement('span');
     carryLabel.textContent = 'Carry Weight';
     const carryValue = document.createElement('strong');
     carryValue.textContent = `${Number(horse.carryWeight)} kg`;
-    const carryProgress = document.createElement('span');
-    carryProgress.className = 'auction-stat-progress weight';
     const pullLabel = document.createElement('span');
     pullLabel.textContent = 'Pull Weight';
     const pullValue = document.createElement('strong');
     pullValue.textContent = `${Number(horse.pullWeight)} kg`;
-    const pullProgress = document.createElement('span');
-    pullProgress.className = 'auction-stat-progress weight';
-    stats.append(carryLabel, carryValue, carryProgress, pullLabel, pullValue, pullProgress);
+    stats.append(carryLabel, carryValue, pullLabel, pullValue);
     container.append(heading, summary, stats);
     extraLines.forEach((line) => {
         const text = document.createElement('p');
@@ -578,10 +538,6 @@ const renderWagonHorseAssignment = () => {
 
 const closeBuyModal = () => {
     buyModal.hidden = true;
-    buyModalContent.classList.add('has-title');
-    buyModalContent.classList.remove('message-only');
-    buyForm.hidden = false;
-    buyProcessing.hidden = true;
 };
 
 const updateCustomizationPrice = () => {
@@ -1111,7 +1067,6 @@ window.addEventListener('message', (event) => {
         horseWindow.classList.remove('visible');
         horseWindow.setAttribute('aria-hidden', 'true');
         closeBuyModal();
-        closeScaleMenu();
         if (event.data.returnToManager) {
             manageWindow.classList.add('visible');
             manageWindow.setAttribute('aria-hidden', 'false');
@@ -1127,13 +1082,11 @@ window.addEventListener('message', (event) => {
         manageCard.classList.remove('customizing');
         document.getElementById('auction-panel').hidden = true;
         closeManageModals();
-        closeScaleMenu();
         showManageMain(true);
         return;
     }
 
     if (event.data.action === 'openHorseManager') {
-        closeScaleMenu();
         horseWindow.classList.remove('visible');
         wildRegisterWindow.classList.remove('visible');
         cameraZoom.value = event.data.cameraZoom;
@@ -1296,13 +1249,10 @@ window.addEventListener('message', (event) => {
     if (event.data.action !== 'openHorse') return;
 
     const horse = event.data.horse;
-    closeScaleMenu();
     closeBuyModal();
     manageWindow.classList.remove('visible');
     wildRegisterWindow.classList.remove('visible');
     document.getElementById('breed').textContent = horse.name || horse.breed;
-    document.getElementById('horse-eyebrow').hidden = !horse.showBuy;
-    document.getElementById('price-label').textContent = horse.showBuy ? 'Buy Price' : 'Horse Value';
     document.getElementById('breed-summary').textContent = horse.breed;
     document.getElementById('tame-level').textContent = horse.tameLevel;
     ['health', 'stamina', 'agility', 'speed', 'acceleration', 'strength'].forEach((stat) => renderHorseStat(horse, stat));
@@ -1317,6 +1267,7 @@ window.addEventListener('message', (event) => {
     requestAnimationFrame(updateScaleLimit);
 });
 
+document.getElementById('close').addEventListener('click', closeHorse);
 document.getElementById('leave').addEventListener('click', closeHorse);
 document.getElementById('wild-register-close').addEventListener('click', closeWildHorseRegistration);
 document.getElementById('wild-register-cancel').addEventListener('click', closeWildHorseRegistration);
@@ -1400,6 +1351,7 @@ document.getElementById('auction-back').addEventListener('click', () => {
     if (!document.getElementById('auction-home').hidden) postNui('closeHorseAuction');
     else renderAuctionHome();
 });
+document.getElementById('manage-close').addEventListener('click', closeHorseManager);
 document.getElementById('manage-leave').addEventListener('click', closeHorseManager);
 document.getElementById('stable-inventory-close').addEventListener('click', closeStableInventory);
 document.getElementById('transfer-stable-horse').addEventListener('click', () => transferStableInventory('horse'));
@@ -1417,17 +1369,8 @@ document.getElementById('riding-warning-confirm').addEventListener('click', () =
     postNui('managedHorseAction', { action: 'setRiding', horseId: selectedManagedHorseId });
 });
 document.getElementById('wagon-stats-close').addEventListener('click', closeManageModals);
-document.querySelectorAll('[data-open-scale]').forEach((button) => {
-    button.addEventListener('click', () => {
-        updateScaleLimit();
-        scaleMenu.hidden = false;
-    });
-});
-document.getElementById('close-scale').addEventListener('click', closeScaleMenu);
-scaleSlider.addEventListener('input', () => applyScale(scaleSlider.value));
-textScaleSlider.addEventListener('input', () => applyTextScale(textScaleSlider.value));
-legacyScaleInputs.forEach((input) => {
-    input.addEventListener('input', () => applyScale(Number(input.value) * 100));
+scaleInputs.forEach((input) => {
+    input.addEventListener('input', () => applyScale(input.value));
 });
 cameraZoom.addEventListener('input', () => postNui('horseCameraZoom', { zoom: Number(cameraZoom.value) }));
 window.addEventListener('resize', updateScaleLimit);
@@ -1439,8 +1382,6 @@ buyButton.addEventListener('click', () => {
     document.querySelectorAll('[data-buy-gender]').forEach((button) => {
         button.classList.toggle('active', button.dataset.buyGender === selectedBuyGender);
     });
-    buyForm.hidden = false;
-    buyProcessing.hidden = true;
     buyModal.hidden = false;
     nameInput.focus();
 });
@@ -1461,21 +1402,11 @@ document.getElementById('buy-confirm').addEventListener('click', async () => {
     if (!name) return;
 
     button.disabled = true;
-    buyModalContent.classList.remove('has-title');
-    buyModalContent.classList.add('message-only');
-    buyForm.hidden = true;
-    buyProcessing.hidden = false;
     const response = await postNui('buyHorse', {
         name,
         gender: selectedBuyGender,
     });
-    const result = await response.json();
-    if (!result.success) {
-        buyModalContent.classList.add('has-title');
-        buyModalContent.classList.remove('message-only');
-        buyForm.hidden = false;
-        buyProcessing.hidden = true;
-    }
+    await response.json();
     button.disabled = false;
 });
 
@@ -1746,7 +1677,7 @@ document.addEventListener('keyup', (event) => {
         return;
     }
     if (!buyModal.hidden) {
-        if (buyProcessing.hidden) closeBuyModal();
+        closeBuyModal();
         return;
     }
     if (!wagonCustomizePanel.hidden) {

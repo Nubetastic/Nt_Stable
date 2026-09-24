@@ -6,16 +6,26 @@
     <title>Stable Horse</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IM+Fell+English&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <main id="horse-window" class="horse-window" aria-hidden="true">
         <div class="vignette" aria-hidden="true"></div>
-        <section class="horse-card has-title">
-            <header class="title-sign">
-                <h1 id="breed" class="title">Horse</h1>
-                <p id="horse-eyebrow" class="eyebrow">Stable Horse</p>
+        <section class="horse-card">
+            <header>
+                <div>
+                    <p class="eyebrow">Stable Horse</p>
+                    <h1 id="breed">Horse</h1>
+                </div>
+                <div class="header-controls">
+                    <label class="scale-control">
+                        <span>Scale</span>
+                        <input id="ui-scale" data-ui-scale type="range" min="0.50" max="2.00" step="0.05" value="1.00" aria-label="Scale interface">
+                        <output data-scale-value>100%</output>
+                    </label>
+                    <button id="close" class="close-button" type="button" aria-label="Close">&times;</button>
+                </div>
             </header>
 
             <div class="summary">
@@ -56,43 +66,33 @@
                 <div><span>Pull Weight</span><strong id="pull-weight"></strong></div>
             </div>
 
-            <div class="price-row purchase-row">
-                <div>
-                    <span id="price-label">Buy Price</span>
-                    <strong id="price"></strong>
-                </div>
-                <button id="buy" class="primary" type="button">Buy</button>
+            <div class="price-row">
+                <span>Buy Price</span>
+                <strong id="price"></strong>
             </div>
 
-            <div class="divider" aria-hidden="true"><span>&#9671; &#9670; &#9671;</span></div>
-            <footer class="bottom-controls">
-                <button class="secondary" data-open-scale type="button">Scale</button>
+            <footer>
                 <button id="leave" class="secondary" type="button">Leave</button>
+                <button id="buy" class="primary" type="button">Buy</button>
             </footer>
 
             <div id="buy-modal" class="manage-modal" hidden>
-                <div class="modal-content has-title">
-                    <div id="buy-form">
-                        <h2>Purchase Horse</h2>
-                        <label>
-                            <span>Horse Name</span>
-                            <input id="buy-name" type="text" maxlength="32" autocomplete="off">
-                        </label>
-                        <div class="form-field">
-                            <span>Gender</span>
-                            <div class="gender-buttons">
-                                <button class="active" type="button" data-buy-gender="male">Gelding</button>
-                                <button type="button" data-buy-gender="female">Mare</button>
-                            </div>
-                        </div>
-                        <div class="divider" aria-hidden="true"><span>&#9671; &#9670; &#9671;</span></div>
-                        <div class="modal-actions">
-                            <button id="buy-cancel" type="button">Cancel</button>
-                            <button id="buy-confirm" class="primary" type="button">Buy</button>
+                <div class="modal-content">
+                    <h2>Purchase Horse</h2>
+                    <label>
+                        <span>Horse Name</span>
+                        <input id="buy-name" type="text" maxlength="32" autocomplete="off">
+                    </label>
+                    <div class="form-field">
+                        <span>Gender</span>
+                        <div class="gender-buttons">
+                            <button class="active" type="button" data-buy-gender="male">Gelding</button>
+                            <button type="button" data-buy-gender="female">Mare</button>
                         </div>
                     </div>
-                    <div id="buy-processing" class="buy-processing" hidden>
-                        <h2>Moving horse to Stable</h2>
+                    <div class="modal-actions">
+                        <button id="buy-cancel" type="button">Cancel</button>
+                        <button id="buy-confirm" class="primary" type="button">Buy</button>
                     </div>
                 </div>
             </div>
@@ -101,7 +101,7 @@
 
     <main id="wild-register-window" class="horse-window" aria-hidden="true">
         <div class="vignette" aria-hidden="true"></div>
-        <section class="horse-card wild-register-card has-title">
+        <section class="horse-card wild-register-card">
             <header>
                 <div>
                     <p class="eyebrow">Wild Horse</p>
@@ -147,11 +147,18 @@
             <div class="manage-card-content">
             <header>
                 <div>
-                    <p id="manage-eyebrow" class="eyebrow" hidden>Stable Management</p>
+                    <p id="manage-eyebrow" class="eyebrow">Stable Management</p>
                     <h1 id="manage-title">Manage Stable</h1>
                 </div>
+                <div class="header-controls">
+                    <label class="scale-control">
+                        <span>Scale</span>
+                        <input id="manage-ui-scale" data-ui-scale type="range" min="0.50" max="2.00" step="0.05" value="1.00" aria-label="Scale interface">
+                        <output data-scale-value>100%</output>
+                    </label>
+                    <button id="manage-close" class="close-button" type="button" aria-label="Close">&times;</button>
+                </div>
             </header>
-            <div class="divider manage-title-divider" aria-hidden="true"><span>&#9671; &#9670; &#9671;</span></div>
 
             <label class="camera-zoom">
                 <span>Camera Zoom</span>
@@ -176,8 +183,6 @@
                         <button id="sell-horse-slot" class="danger" type="button" hidden>Sell Empty Slot</button>
                     </div>
                 </section>
-
-                <div class="divider slot-divider" aria-hidden="true"><span>&#9671; &#9670; &#9671;</span></div>
 
                 <section class="stable-slot-section">
                     <div class="stable-slot-heading">
@@ -228,6 +233,10 @@
             <div class="manage-actions" data-manage-main>
                 <button id="open-horse-auction" type="button">Horse Auction</button>
             </div>
+
+            <footer data-manage-main>
+                <button id="manage-leave" class="secondary" type="button">Leave</button>
+            </footer>
 
             <div id="auction-panel" hidden>
                 <div class="customize-horse-summary">
@@ -426,14 +435,8 @@
                 </div>
             </div>
 
-            <div class="divider manage-footer-divider" aria-hidden="true"><span>&#9671; &#9670; &#9671;</span></div>
-            <footer class="bottom-controls manage-footer">
-                <button class="secondary" data-open-scale type="button">Scale</button>
-                <button id="manage-leave" class="secondary" type="button">Leave</button>
-            </footer>
-
             <div id="rename-modal" class="manage-modal" hidden>
-                <div class="modal-content has-title">
+                <div class="modal-content">
                     <h2 id="rename-title">Rename Horse</h2>
                     <label>
                         <span id="rename-label">Horse Name</span>
@@ -447,7 +450,7 @@
             </div>
 
             <div id="sell-modal" class="manage-modal" hidden>
-                <div class="modal-content sell-modal-content">
+                <div class="modal-content">
                     <h2 id="sell-title">Sell Horse</h2>
                     <p>Sell <strong id="sell-object-name"></strong> for <strong id="sell-price"></strong>?</p>
                     <p class="danger-text">This cannot be undone.</p>
@@ -459,7 +462,7 @@
             </div>
 
             <div id="riding-warning-modal" class="manage-modal" hidden>
-                <div class="modal-content has-title">
+                <div class="modal-content">
                     <h2>Set Riding Horse</h2>
                     <p><strong id="riding-warning-name"></strong> will be removed from every wagon it is assigned to.</p>
                     <div class="modal-actions">
@@ -470,7 +473,7 @@
             </div>
 
             <div id="wagon-stats-modal" class="manage-modal" hidden>
-                <div class="modal-content has-title">
+                <div class="modal-content">
                     <h2 id="wagon-stats-name">Wagon Stats</h2>
                     <p id="wagon-stats-description"></p>
                     <div class="wagon-stats-grid">
@@ -491,7 +494,7 @@
     </main>
     <main id="stable-inventory-window" class="stable-inventory-window" aria-hidden="true">
         <div class="vignette" aria-hidden="true"></div>
-        <section class="stable-inventory-card has-title">
+        <section class="stable-inventory-card">
             <header>
                 <div>
                     <p class="eyebrow">Stable Inventory</p>
@@ -509,25 +512,6 @@
             </div>
         </section>
     </main>
-    <section id="scale-menu" class="scale-menu" aria-label="Scale controls" hidden>
-        <div class="scale-menu-control">
-            <div class="scale-menu-header">
-                <span>Menu Scale</span>
-                <span id="scale-value">100%</span>
-            </div>
-            <input id="scale-slider" type="range" min="75" max="125" value="100">
-            <div class="scale-marks"><span>75%</span><span>100%</span><span>125%</span></div>
-        </div>
-        <div class="scale-menu-control">
-            <div class="scale-menu-header">
-                <span>Text Size</span>
-                <span id="text-scale-value">100%</span>
-            </div>
-            <input id="text-scale-slider" type="range" min="75" max="150" value="100">
-            <div class="scale-marks"><span>75%</span><span>100%</span><span>150%</span></div>
-        </div>
-        <button id="close-scale" type="button">Close</button>
-    </section>
     <script src="app.js"></script>
 </body>
 </html>

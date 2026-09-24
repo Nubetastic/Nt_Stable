@@ -5,16 +5,6 @@ local stallHorses = {}
 local openStable
 local openHorseModel
 
-FreeHorseStableSlots = nil
-
-RegisterNetEvent('nt_stables:client:setFreeHorseStableSlots', function(freeSlots)
-    FreeHorseStableSlots = math.max(0, math.floor(tonumber(freeSlots) or 0))
-end)
-
-local function RequestFreeHorseStableSlots()
-    TriggerServerEvent('nt_stables:server:requestFreeHorseStableSlots')
-end
-
 function CloseHorseInfo()
     local returnToManager = HorseManagerOpen == true
     SetNuiFocus(returnToManager, returnToManager)
@@ -147,11 +137,6 @@ end)
 RegisterNUICallback('buyHorse', function(data, cb)
     if not openStable or not openHorseModel then return cb({ success = false }) end
 
-    if FreeHorseStableSlots ~= nil and FreeHorseStableSlots < 1 then
-        lib.notify({ title = 'You do not have an empty horse slot.', type = 'error', duration = 10000 })
-        return cb({ success = false })
-    end
-
     local horseName = tostring(data.name or ''):match('^%s*(.-)%s*$')
     if horseName == '' or #horseName > 32 then
         lib.notify({ title = 'Horse names must contain 1 to 32 characters.', type = 'error', duration = 10000 })
@@ -190,7 +175,6 @@ RegisterNUICallback('buyHorse', function(data, cb)
         return cb({ success = false })
     end
 
-    FreeHorseStableSlots = tonumber(result.freeHorseStableSlots) or FreeHorseStableSlots
     TriggerEvent('nt_stables:client:ridingHorseChanged')
     CloseHorseInfo()
     lib.notify({ title = horseName .. ' is now your active horse.', type = 'success', duration = 10000 })
@@ -218,17 +202,6 @@ CreateThread(function()
 
         Wait(1000)
     end
-end)
-
-RegisterNetEvent('RSGCore:Client:OnPlayerLoaded', RequestFreeHorseStableSlots)
-
-AddEventHandler('onClientResourceStart', function(resourceName)
-    if resourceName ~= GetCurrentResourceName() then return end
-
-    CreateThread(function()
-        Wait(1000)
-        RequestFreeHorseStableSlots()
-    end)
 end)
 
 AddEventHandler('onResourceStop', function(resourceName)
