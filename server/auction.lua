@@ -307,6 +307,7 @@ RegisterSqlCallback('nt_stables:server:createAuctionListing', function(source, h
 
     local listingId = MySQL.scalar.await('SELECT id FROM nt_stable_horse_listings WHERE horse_id = ?', { horseId })
     if horse.active == 1 or horse.active == true then Player.Functions.SetMetaData('stable_active_horse', false) end
+    UpdateFreeHorseStableSlots(source, Player)
     FinishOperation(operationId)
     return { success = true, listingId = listingId, wasActive = horse.active == 1 or horse.active == true,
         clearedWagon = prepared.clearedWagon }
@@ -537,6 +538,7 @@ RegisterSqlCallback('nt_stables:server:receiveAuctionHorse', function(source, li
         { query = 'DELETE FROM nt_stable_horse_listings WHERE id = ? AND status = ?', values = { listingId, 'awaiting_claim' } },
     })
     if not success then return { success = false, message = 'The horse could not be added to your stable.' } end
+    UpdateFreeHorseStableSlots(source, Player)
     return { success = true, horseId = tonumber(listing.horse_id) }
 end)
 
