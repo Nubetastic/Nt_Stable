@@ -17,8 +17,8 @@ This script does not spawn stable NPC's, it only places a ox_target zone for whe
     - Same horse can be assigned to multiple wagons, only 1 active wagon at a time.
 - Horse training through riding, leading, wagon work, and care
 - Tamed wild-horse registration
-    - Wild horses get +- modifers, allowing players to get better stat horses from the wild.
-- Direct sales and auctions with day length experiation.
+    - Wild horses get +- modifiers, allowing players to get better stat horses from the wild.
+- Direct sales and auctions with day length expiration.
     - Allows players to sell horses to the rest of the server easily from one central location.
     - Auction off a horse, or sell a horse at a set price.
 - Saddlebag, wagon, and shared stable storage
