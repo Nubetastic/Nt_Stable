@@ -13,6 +13,7 @@ const cameraZoom = document.getElementById('camera-zoom');
 const horseList = document.getElementById('horse-list');
 const wagonList = document.getElementById('wagon-list');
 const buyModal = document.getElementById('buy-modal');
+const noHorseStallModal = document.getElementById('no-horse-stall-modal');
 const customizePanel = document.getElementById('customize-panel');
 const wagonCustomizePanel = document.getElementById('wagon-customize-panel');
 const wagonHorsesPanel = document.getElementById('wagon-horses-panel');
@@ -32,6 +33,7 @@ let selectedManagedHorseId = 0;
 let selectedManagedWagonId = 0;
 let selectedManageType = 'horse';
 let selectedBuyGender = 'male';
+let freeHorseStableSlots;
 let customizationOptions = [];
 let selectedCustomizationCategory;
 let componentTintTimer = 0;
@@ -212,12 +214,34 @@ const renderAuctionHorseDetails = (container, horse, extraLines = []) => {
     const stats = document.createElement('div');
     stats.className = 'auction-stats-grid';
     ['health', 'stamina', 'agility', 'speed', 'acceleration', 'strength'].forEach((stat) => {
+        const statRow = document.createElement('div');
+        statRow.className = 'auction-stat';
+        const statHeader = document.createElement('div');
         const label = document.createElement('span');
         label.textContent = stat.charAt(0).toUpperCase() + stat.slice(1);
         const value = document.createElement('strong');
         value.textContent = `${horse.stats[stat]}${wildModifierText(horse, stat)}`;
-        stats.append(label, value);
+        const dots = document.createElement('div');
+        dots.className = 'stat-dots';
+        const maximum = Number(horse.maximumStat) || 9;
+        const current = Math.max(0, Math.min(maximum, Number(horse.stats[stat])));
+        const capable = Math.max(current, Math.min(maximum, Number(horse.maximumStats && horse.maximumStats[stat])));
+        const modifier = horse.wild ? Number(horse.wildModifiers && horse.wildModifiers[stat]) || 0 : 0;
+        const modifiedDots = Math.min(current, Math.abs(modifier));
+        for (let dotValue = 1; dotValue <= maximum; dotValue += 1) {
+            const dot = document.createElement('span');
+            if (dotValue <= modifiedDots) dot.className = `stat-dot ${modifier < 0 ? 'negative' : 'positive'}`;
+            else if (dotValue <= current) dot.className = 'stat-dot current';
+            else if (dotValue <= capable) dot.className = 'stat-dot capable';
+            else dot.className = 'stat-dot unavailable';
+            dots.append(dot);
+        }
+        statHeader.append(label, value);
+        statRow.append(statHeader, dots);
+        stats.append(statRow);
     });
+    const weights = document.createElement('div');
+    weights.className = 'auction-weights';
     const carryLabel = document.createElement('span');
     carryLabel.textContent = 'Carry Weight';
     const carryValue = document.createElement('strong');
@@ -226,8 +250,8 @@ const renderAuctionHorseDetails = (container, horse, extraLines = []) => {
     pullLabel.textContent = 'Pull Weight';
     const pullValue = document.createElement('strong');
     pullValue.textContent = `${Number(horse.pullWeight)} kg`;
-    stats.append(carryLabel, carryValue, pullLabel, pullValue);
-    container.append(heading, summary, stats);
+    weights.append(carryLabel, carryValue, pullLabel, pullValue);
+    container.append(heading, summary, stats, weights);
     extraLines.forEach((line) => {
         const text = document.createElement('p');
         text.textContent = line;
@@ -538,6 +562,7 @@ const renderWagonHorseAssignment = () => {
 
 const closeBuyModal = () => {
     buyModal.hidden = true;
+    noHorseStallModal.hidden = true;
 };
 
 const updateCustomizationPrice = () => {
@@ -1249,6 +1274,7 @@ window.addEventListener('message', (event) => {
     if (event.data.action !== 'openHorse') return;
 
     const horse = event.data.horse;
+    freeHorseStableSlots = Number(horse.freeHorseStableSlots);
     closeBuyModal();
     manageWindow.classList.remove('visible');
     wildRegisterWindow.classList.remove('visible');
@@ -1376,6 +1402,11 @@ cameraZoom.addEventListener('input', () => postNui('horseCameraZoom', { zoom: Nu
 window.addEventListener('resize', updateScaleLimit);
 
 buyButton.addEventListener('click', () => {
+    if (freeHorseStableSlots === 0) {
+        noHorseStallModal.hidden = false;
+        return;
+    }
+
     const nameInput = document.getElementById('buy-name');
     nameInput.value = '';
     selectedBuyGender = 'male';
@@ -1396,6 +1427,7 @@ document.querySelectorAll('[data-buy-gender]').forEach((button) => {
 });
 
 document.getElementById('buy-cancel').addEventListener('click', closeBuyModal);
+document.getElementById('no-horse-stall-close').addEventListener('click', closeBuyModal);
 document.getElementById('buy-confirm').addEventListener('click', async () => {
     const button = document.getElementById('buy-confirm');
     const name = document.getElementById('buy-name').value.trim();
@@ -1672,6 +1704,10 @@ document.addEventListener('pointermove', (event) => {
 
 document.addEventListener('keyup', (event) => {
     if (event.key !== 'Escape') return;
+    if (!noHorseStallModal.hidden) {
+        closeBuyModal();
+        return;
+    }
     if (!document.getElementById('wagon-stats-modal').hidden) {
         closeManageModals();
         return;

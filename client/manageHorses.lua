@@ -60,7 +60,7 @@ local function BuildHorseList()
 end
 
 local function BuildAuctionHorse(horse)
-    local base, stats, level = HorseStats.Calculate(horse)
+    local base, stats, level, maximumStats = HorseStats.Calculate(horse)
     if not base then return end
     local modifiers = {}
     if horse.wild == 1 or horse.wild == true or horse.wild == '1' then
@@ -72,6 +72,7 @@ local function BuildAuctionHorse(horse)
         id = horse.id, name = horse.name, horse = horse.horse, gender = horse.gender,
         wild = horse.wild == 1 or horse.wild == true or horse.wild == '1',
         breed = base.breed, level = level, stats = stats,
+        maximumStats = maximumStats, maximumStat = HorseStats.MaximumRank,
         carryWeight = HorseStats.GetCarryWeight(stats.strength),
         pullWeight = HorseStats.GetPullWeight(stats.strength),
         wildModifiers = modifiers,

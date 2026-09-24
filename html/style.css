@@ -216,6 +216,11 @@ body {
     gap: 14px;
 }
 
+.stable-slot-section + .stable-slot-section {
+    padding-top: 12px;
+    border-top: 1px solid rgba(220, 194, 139, 0.3);
+}
+
 .stable-balance-row,
 .stable-slot-heading {
     display: flex;
@@ -764,33 +769,44 @@ footer[data-manage-main] {
 
 .auction-stats-grid {
     display: grid;
-    grid-template-columns: 1fr auto;
-    column-gap: 0;
-    row-gap: 2px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.auction-stat {
+    display: grid;
+    gap: 9px;
+    padding: 10px;
     border: 1px solid rgba(220, 194, 139, 0.3);
     background: rgba(43, 37, 28, 0.65);
 }
 
-.auction-stats-grid span,
-.auction-stats-grid strong {
+.auction-stat > div:first-child {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.auction-weights {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    margin-top: 10px;
+    border: 1px solid rgba(220, 194, 139, 0.3);
+    background: rgba(43, 37, 28, 0.65);
+}
+
+.auction-weights span,
+.auction-weights strong {
     padding: 7px 9px;
 }
 
-.auction-stats-grid span:nth-child(4n + 1),
-.auction-stats-grid strong:nth-child(4n + 2) {
-    background: rgba(220, 194, 139, 0.08);
-}
-
-.auction-stats-grid span:nth-child(4n + 3),
-.auction-stats-grid strong:nth-child(4n + 4) {
-    background: rgba(255, 255, 255, 0.025);
-}
-
-.auction-stats-grid span {
+.auction-stat span,
+.auction-weights span {
     color: #bdb29c;
 }
 
-.auction-stats-grid strong {
+.auction-stat strong,
+.auction-weights strong {
     color: #eee2c5;
     text-align: right;
 }
@@ -1385,7 +1401,6 @@ header::after {
     left: 50%;
     padding: 0 7px;
     color: var(--rdr-gold);
-    background: var(--rdr-panel);
     content: "\2726";
     font-size: 11px;
     line-height: 14px;
@@ -1550,23 +1565,23 @@ h2 {
 
 .wagon-model-display,
 .wagon-stats-grid,
-.auction-stats-grid {
+.auction-stat,
+.auction-weights {
     border-color: rgba(255, 255, 255, 0.24);
     background: rgba(0, 0, 0, 0.28);
 }
 
 .wagon-model-display span,
 .wagon-stats-grid span,
-.auction-stats-grid span {
+.auction-stat span,
+.auction-weights span {
     color: var(--rdr-muted);
 }
 
 .wagon-model-display span:nth-child(4n + 1),
 .wagon-model-display strong:nth-child(4n + 2),
 .wagon-stats-grid span:nth-child(4n + 1),
-.wagon-stats-grid strong:nth-child(4n + 2),
-.auction-stats-grid span:nth-child(4n + 1),
-.auction-stats-grid strong:nth-child(4n + 2) {
+.wagon-stats-grid strong:nth-child(4n + 2) {
     background: rgba(255, 255, 255, 0.055);
 }
 

@@ -147,6 +147,20 @@ local function GetStableSlots(Player)
     }
 end
 
+function UpdateFreeHorseStableSlots(Player)
+    if not Player then return end
+
+    local horseCount = tonumber(MySQL.scalar.await("SELECT COUNT(*) FROM nt_stable_horses WHERE citizenid = ? AND location = 'stable'", {
+        Player.PlayerData.citizenid,
+    })) or 0
+    TriggerClientEvent('nt_stables:client:updateFreeHorseStableSlots', Player.PlayerData.source,
+        math.max(0, GetStableSlots(Player).horse - horseCount))
+end
+
+RegisterSqlEvent('nt_stables:server:requestFreeHorseStableSlots', function(source)
+    UpdateFreeHorseStableSlots(RSGCore.Functions.GetPlayer(source))
+end)
+
 local function GetSlotPrice(slotType, slotNumber)
     local slotConfig = slotType == 'horse' and Config.StableSlots.Horse or Config.StableSlots.Wagon
     return slotConfig.BaseSlotPrice * (Config.StableSlots.AdditionalSlotMultiplier ^ (slotNumber - 1))
@@ -727,6 +741,7 @@ RegisterSqlCallback('nt_stables:server:registerWildHorse', function(source, data
         Player.Functions.SetMetaData('stable_slots', costs.slots)
     end
 
+    UpdateFreeHorseStableSlots(Player)
     wildHorsePlayerLocks[source] = nil
     return {
         success = true,
@@ -799,6 +814,7 @@ RegisterSqlCallback('nt_stables:server:changeStableSlots', function(source, slot
     end
 
     local data = GetStableManagerData(Player, slots)
+    if slotType == 'horse' then UpdateFreeHorseStableSlots(Player) end
     data.success = true
     return data
 end)
@@ -1294,6 +1310,7 @@ RegisterSqlCallback('nt_stables:server:buyHorse', function(source, stableName, m
     })
     savedHorse.isWagonHorse = false
     savedHorse.sellPrice = GetSellPrice(savedHorse)
+    UpdateFreeHorseStableSlots(Player)
     return { success = true, horseId = databaseId, horse = savedHorse }
 end)
 
@@ -1489,6 +1506,7 @@ RegisterSqlCallback('nt_stables:server:sellHorse', function(source, horseId)
     local clearedWagon = ClearIncompleteActiveWagon(Player)
 
     Player.Functions.AddMoney('cash', sellPrice)
+    UpdateFreeHorseStableSlots(Player)
 
     return {
         price = sellPrice,
@@ -1760,6 +1778,7 @@ RegisterSqlEvent('nt_stables:server:horseFailedRevive', function(src, horseId)
         Player.Functions.SetMetaData('stable_active_horse', false)
     end
     ClearIncompleteActiveWagon(Player)
+    UpdateFreeHorseStableSlots(Player)
     TriggerClientEvent('ox_lib:notify', src, {
         title = horse.name .. ' has permanently died.',
         type = 'error',

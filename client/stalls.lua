@@ -5,6 +5,12 @@ local stallHorses = {}
 local openStable
 local openHorseModel
 
+FreeHorseStableSlots = nil
+
+local function RequestFreeHorseStableSlots()
+    TriggerServerEvent('nt_stables:server:requestFreeHorseStableSlots')
+end
+
 function CloseHorseInfo()
     local returnToManager = HorseManagerOpen == true
     SetNuiFocus(returnToManager, returnToManager)
@@ -16,6 +22,7 @@ end
 function ShowHorseInfo(horse, showBuy, stableName)
     openStable = stableName
     horse.showBuy = showBuy
+    horse.freeHorseStableSlots = FreeHorseStableSlots
     SetNuiFocus(true, true)
     SendNUIMessage({
         action = 'openHorse',
@@ -129,6 +136,12 @@ RegisterNetEvent('nt_stables:client:setStalls', function(assignments)
     stableAssignments = assignments
 end)
 
+RegisterNetEvent('nt_stables:client:updateFreeHorseStableSlots', function(freeSlots)
+    FreeHorseStableSlots = math.max(0, math.floor(tonumber(freeSlots) or 0))
+end)
+
+RegisterNetEvent('RSGCore:Client:OnPlayerLoaded', RequestFreeHorseStableSlots)
+
 RegisterNUICallback('closeHorse', function(_, cb)
     CloseHorseInfo()
     cb(1)
@@ -150,6 +163,8 @@ RegisterNUICallback('buyHorse', function(data, cb)
 
     local stableName = openStable
     local model = openHorseModel
+    CloseHorseInfo()
+
     local appearance
     for _, stallHorse in pairs(stallHorses[stableName] or {}) do
         if stallHorse.model == model and DoesEntityExist(stallHorse.entity) then
@@ -161,6 +176,7 @@ RegisterNUICallback('buyHorse', function(data, cb)
         lib.notify({ title = 'The horse appearance could not be captured.', type = 'error', duration = 10000 })
         return cb({ success = false })
     end
+
     local result = lib.callback.await('nt_stables:server:buyHorse', false,
         stableName,
         model,
@@ -176,7 +192,6 @@ RegisterNUICallback('buyHorse', function(data, cb)
     end
 
     TriggerEvent('nt_stables:client:ridingHorseChanged')
-    CloseHorseInfo()
     lib.notify({ title = horseName .. ' is now your active horse.', type = 'success', duration = 10000 })
     cb({ success = true })
 end)
@@ -184,6 +199,7 @@ end)
 CreateThread(function()
     Wait(0)
     TriggerServerEvent('nt_stables:server:requestStalls')
+    RequestFreeHorseStableSlots()
 
     while true do
         local playerCoords = GetEntityCoords(PlayerPedId())

@@ -24,7 +24,7 @@ local function GetSlots(Player)
 end
 
 local function BuildHorse(horse)
-    local base, stats, level = HorseStats.Calculate(horse)
+    local base, stats, level, maximumStats = HorseStats.Calculate(horse)
     if not base then return end
 
     local modifiers = {}
@@ -37,6 +37,8 @@ local function BuildHorse(horse)
     horse.breed = base.breed
     horse.level = level
     horse.stats = stats
+    horse.maximumStats = maximumStats
+    horse.maximumStat = HorseStats.MaximumRank
     horse.carryWeight = HorseStats.GetCarryWeight(stats.strength)
     horse.pullWeight = HorseStats.GetPullWeight(stats.strength)
     horse.wildModifiers = modifiers
@@ -307,6 +309,7 @@ RegisterSqlCallback('nt_stables:server:createAuctionListing', function(source, h
 
     local listingId = MySQL.scalar.await('SELECT id FROM nt_stable_horse_listings WHERE horse_id = ?', { horseId })
     if horse.active == 1 or horse.active == true then Player.Functions.SetMetaData('stable_active_horse', false) end
+    UpdateFreeHorseStableSlots(Player)
     FinishOperation(operationId)
     return { success = true, listingId = listingId, wasActive = horse.active == 1 or horse.active == true,
         clearedWagon = prepared.clearedWagon }
@@ -537,6 +540,7 @@ RegisterSqlCallback('nt_stables:server:receiveAuctionHorse', function(source, li
         { query = 'DELETE FROM nt_stable_horse_listings WHERE id = ? AND status = ?', values = { listingId, 'awaiting_claim' } },
     })
     if not success then return { success = false, message = 'The horse could not be added to your stable.' } end
+    UpdateFreeHorseStableSlots(Player)
     return { success = true, horseId = tonumber(listing.horse_id) }
 end)
 
