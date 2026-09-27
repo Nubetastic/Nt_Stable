@@ -10,20 +10,17 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <div id="scaleRoot" class="scale-root">
     <main id="horse-window" class="horse-window" aria-hidden="true">
         <div class="vignette" aria-hidden="true"></div>
-        <section class="horse-card">
+        <section class="horse-card" data-scale-bound>
             <header>
                 <div>
                     <p class="eyebrow">Stable Horse</p>
                     <h1 id="breed">Horse</h1>
                 </div>
                 <div class="header-controls">
-                    <label class="scale-control">
-                        <span>Scale</span>
-                        <input id="ui-scale" data-ui-scale type="range" min="0.50" max="2.00" step="0.05" value="1.00" aria-label="Scale interface">
-                        <output data-scale-value>100%</output>
-                    </label>
+                    <button class="secondary" data-open-scale type="button">Scale</button>
                     <button id="close" class="close-button" type="button" aria-label="Close">&times;</button>
                 </div>
             </header>
@@ -111,18 +108,14 @@
 
     <main id="wild-register-window" class="horse-window" aria-hidden="true">
         <div class="vignette" aria-hidden="true"></div>
-        <section class="horse-card wild-register-card">
+        <section class="horse-card wild-register-card" data-scale-bound>
             <header>
                 <div>
                     <p class="eyebrow">Wild Horse</p>
                     <h1>Register Horse</h1>
                 </div>
                 <div class="header-controls">
-                    <label class="scale-control">
-                        <span>Scale</span>
-                        <input data-ui-scale type="range" min="0.50" max="2.00" step="0.05" value="1.00" aria-label="Scale interface">
-                        <output data-scale-value>100%</output>
-                    </label>
+                    <button class="secondary" data-open-scale type="button">Scale</button>
                     <button id="wild-register-close" class="close-button" type="button" aria-label="Close">&times;</button>
                 </div>
             </header>
@@ -153,7 +146,7 @@
 
     <main id="manage-window" class="manage-window" aria-hidden="true">
         <div class="vignette" aria-hidden="true"></div>
-        <section class="manage-card">
+        <section class="manage-card" data-scale-bound>
             <div class="manage-card-content">
             <header>
                 <div>
@@ -161,11 +154,7 @@
                     <h1 id="manage-title">Manage Stable</h1>
                 </div>
                 <div class="header-controls">
-                    <label class="scale-control">
-                        <span>Scale</span>
-                        <input id="manage-ui-scale" data-ui-scale type="range" min="0.50" max="2.00" step="0.05" value="1.00" aria-label="Scale interface">
-                        <output data-scale-value>100%</output>
-                    </label>
+                    <button class="secondary" data-open-scale type="button">Scale</button>
                     <button id="manage-close" class="close-button" type="button" aria-label="Close">&times;</button>
                 </div>
             </header>
@@ -504,13 +493,16 @@
     </main>
     <main id="stable-inventory-window" class="stable-inventory-window" aria-hidden="true">
         <div class="vignette" aria-hidden="true"></div>
-        <section class="stable-inventory-card">
+        <section class="stable-inventory-card" data-scale-bound>
             <header>
                 <div>
                     <p class="eyebrow">Stable Inventory</p>
                     <h1>Stable Inventory</h1>
                 </div>
-                <button id="stable-inventory-close" class="close-button" type="button" aria-label="Close">&times;</button>
+                <div class="header-controls">
+                    <button class="secondary" data-open-scale type="button">Scale</button>
+                    <button id="stable-inventory-close" class="close-button" type="button" aria-label="Close">&times;</button>
+                </div>
             </header>
             <p id="stable-inventory-fee" class="stable-inventory-fee" hidden></p>
             <p class="stable-inventory-description">Items placed here are protected when a horse or wagon cannot carry them. Select one or more items below, then transfer them directly to your active horse or active wagon.</p>
@@ -522,6 +514,23 @@
             </div>
         </section>
     </main>
+    </div>
+
+    <section id="scaleMenu" class="scale-menu" aria-label="Scale controls" hidden>
+        <div class="scale-popup-control">
+            <div class="scale-header">
+                <span>Menu Scale</span>
+                <span id="scaleValue">100%</span>
+            </div>
+            <input id="scaleSlider" type="range" min="75" max="125" value="100">
+            <div class="scale-marks" aria-hidden="true">
+                <span>75%</span>
+                <span>100%</span>
+                <span>125%</span>
+            </div>
+        </div>
+        <button id="closeScaleBtn" class="scale-close-btn" type="button">Close</button>
+    </section>
     <script src="app.js"></script>
 </body>
 </html>

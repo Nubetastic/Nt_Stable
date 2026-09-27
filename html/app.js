@@ -7,8 +7,12 @@ const wildRegisterCard = document.querySelector('.wild-register-card');
 const manageCard = document.querySelector('.manage-card');
 const buyButton = document.getElementById('buy');
 const wildRegisterConfirm = document.getElementById('wild-register-confirm');
-const scaleInputs = document.querySelectorAll('[data-ui-scale]');
-const scaleValues = document.querySelectorAll('[data-scale-value]');
+const scaleRoot = document.getElementById('scaleRoot');
+const scaleMenu = document.getElementById('scaleMenu');
+const scaleSlider = document.getElementById('scaleSlider');
+const scaleValue = document.getElementById('scaleValue');
+const openScaleButtons = document.querySelectorAll('[data-open-scale]');
+const closeScaleBtn = document.getElementById('closeScaleBtn');
 const cameraZoom = document.getElementById('camera-zoom');
 const horseList = document.getElementById('horse-list');
 const wagonList = document.getElementById('wagon-list');
@@ -18,11 +22,11 @@ const customizePanel = document.getElementById('customize-panel');
 const wagonCustomizePanel = document.getElementById('wagon-customize-panel');
 const wagonHorsesPanel = document.getElementById('wagon-horses-panel');
 const customizeCategories = document.getElementById('customize-categories');
-const scaleStorageKey = 'nt_stables_ui_scale_v2';
-const baseUiScale = 1.25;
+const scaleStorageKey = 'nt_stable_menu_scale';
+const viewportInset = 24;
 const manageBaseWidth = 560;
-const customizeBaseScale = Number(getComputedStyle(document.documentElement).getPropertyValue('--customize-base-scale')) || 1;
-const defaultUiScale = 1;
+const configuredScaleMinimum = Number(scaleSlider.min) / 100;
+const configuredScaleMaximum = Number(scaleSlider.max) / 100;
 let managedHorses = [];
 let managedWagons = [];
 let rotatingCamera = false;
@@ -61,35 +65,58 @@ const postNui = (callback, data = {}) => fetch(`https://${GetParentResourceName(
     body: JSON.stringify(data),
 });
 
-const applyScale = (value) => {
-    const maximum = Number(scaleInputs[0].max);
-    const scale = Math.min(maximum, Math.max(0.5, Number(value)));
-    document.documentElement.style.setProperty('--horse-ui-scale', scale * baseUiScale);
-    document.documentElement.style.setProperty('--manage-ui-scale', scale);
-    document.documentElement.style.setProperty('--customize-ui-scale', scale * customizeBaseScale);
-    document.documentElement.style.setProperty('--manage-panel-width', `${manageBaseWidth * scale}px`);
-    document.documentElement.style.setProperty('--manage-content-height', `${window.innerHeight / scale}px`);
-    scaleInputs.forEach((input) => { input.value = scale.toFixed(2); });
-    scaleValues.forEach((output) => { output.textContent = `${Math.round(scale * 100)}%`; });
-    localStorage.setItem(scaleStorageKey, scale);
+const getViewportScaleMaximum = () => {
+    const previousTransform = scaleRoot.style.transform;
+    scaleRoot.style.transform = 'scale(1)';
+
+    const rootRect = scaleRoot.getBoundingClientRect();
+    const transformOrigin = getComputedStyle(scaleRoot).transformOrigin.split(' ').map(Number.parseFloat);
+    const originX = rootRect.left + transformOrigin[0];
+    const originY = rootRect.top + transformOrigin[1];
+    const maximums = [configuredScaleMaximum];
+
+    scaleRoot.querySelectorAll('[data-scale-bound]').forEach((element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        if (style.display === 'none' || rect.width === 0 || rect.height === 0) return;
+
+        if (rect.left < originX) maximums.push((originX - viewportInset) / (originX - rect.left));
+        if (rect.right > originX) maximums.push((window.innerWidth - viewportInset - originX) / (rect.right - originX));
+        if (rect.top < originY) maximums.push((originY - viewportInset) / (originY - rect.top));
+        if (rect.bottom > originY) maximums.push((window.innerHeight - viewportInset - originY) / (rect.bottom - originY));
+    });
+
+    scaleRoot.style.transform = previousTransform;
+    return Math.max(configuredScaleMinimum, Math.min(...maximums));
 };
 
-const updateScaleLimit = () => {
-    const horseVisible = horseWindow.classList.contains('visible');
-    const wildRegisterVisible = wildRegisterWindow.classList.contains('visible');
-    const card = horseVisible ? horseCard : wildRegisterVisible ? wildRegisterCard : manageCard;
-    const cardBaseScale = horseVisible || wildRegisterVisible ? baseUiScale : manageCard.classList.contains('customizing') ? customizeBaseScale : 1;
-    const widthScale = (window.innerWidth * 0.94) / ((horseVisible || wildRegisterVisible ? card.offsetWidth : manageBaseWidth) * cardBaseScale);
-    const heightScale = (window.innerHeight * 0.94) / (card.offsetHeight * cardBaseScale);
-    const viewportMax = horseVisible || wildRegisterVisible ? Math.min(2, widthScale, heightScale) : Math.min(2, widthScale);
-    const maxScale = Math.max(0.5, Math.floor((viewportMax + Number.EPSILON) / 0.05) * 0.05);
+const applyScale = () => {
+    const requestedScale = Number(scaleSlider.value) / 100;
+    const manageVisible = manageWindow.classList.contains('visible');
+    const viewportMaximum = manageVisible
+        ? Math.min(configuredScaleMaximum, (window.innerWidth * 0.94) / manageBaseWidth)
+        : getViewportScaleMaximum();
+    const appliedScale = Math.min(requestedScale, viewportMaximum);
+    const appliedPercentage = Math.max(
+        Number(scaleSlider.min),
+        Math.min(Number(scaleSlider.max), Math.floor(appliedScale * 100))
+    );
 
-    scaleInputs.forEach((input) => { input.max = maxScale.toFixed(2); });
-    applyScale(scaleInputs[0].value);
+    const scale = appliedPercentage / 100;
+    scaleRoot.style.transform = manageVisible ? 'scale(1)' : `scale(${scale})`;
+    document.documentElement.style.setProperty('--manage-ui-scale', scale);
+    document.documentElement.style.setProperty('--manage-panel-width', `${manageBaseWidth * scale}px`);
+    document.documentElement.style.setProperty('--manage-content-height', `${window.innerHeight / scale}px`);
+    scaleSlider.value = appliedPercentage;
+    scaleValue.textContent = `${appliedPercentage}%`;
+    localStorage.setItem(scaleStorageKey, String(appliedPercentage));
 };
 
 const savedScale = Number(localStorage.getItem(scaleStorageKey));
-applyScale(savedScale >= 0.5 ? savedScale : defaultUiScale);
+if (savedScale >= Number(scaleSlider.min) && savedScale <= Number(scaleSlider.max)) scaleSlider.value = savedScale;
+
+const updateScaleLimit = () => applyScale();
+const closeScaleMenu = () => { scaleMenu.hidden = true; };
 
 const closeHorse = () => postNui('closeHorse');
 const closeWildHorseRegistration = () => postNui('closeWildHorseRegistration');
@@ -1032,6 +1059,10 @@ const renderManagedStable = (horses, selectedHorseId, wagons, selectedWagonId, h
 };
 
 window.addEventListener('message', (event) => {
+    if (['openStableInventory', 'closeStableInventory', 'closeWildHorseRegistration', 'closeHorse', 'closeHorseManager', 'openHorseManager', 'openWildHorseRegistration', 'openHorse'].includes(event.data.action)) {
+        closeScaleMenu();
+    }
+
     if (event.data.action === 'openHorseAuction') {
         auctionHome = event.data.home;
         auctionOwnedHorses = event.data.horses || [];
@@ -1044,6 +1075,7 @@ window.addEventListener('message', (event) => {
         wagonHorsesPanel.hidden = true;
         document.getElementById('auction-panel').hidden = false;
         renderAuctionHome();
+        requestAnimationFrame(updateScaleLimit);
         return;
     }
 
@@ -1062,6 +1094,7 @@ window.addEventListener('message', (event) => {
         document.getElementById('manage-title').textContent = 'Manage Stable';
         showManageMain(true);
         renderManagedStable(event.data.horses, event.data.selectedHorseId, event.data.wagons, event.data.selectedWagonId, event.data.horseSlots, event.data.wagonSlots, event.data.debt);
+        requestAnimationFrame(updateScaleLimit);
         return;
     }
 
@@ -1072,6 +1105,7 @@ window.addEventListener('message', (event) => {
         renderStableInventory(event.data.inventory);
         stableInventoryWindow.classList.add('visible');
         stableInventoryWindow.setAttribute('aria-hidden', 'false');
+        requestAnimationFrame(updateScaleLimit);
         return;
     }
 
@@ -1395,9 +1429,14 @@ document.getElementById('riding-warning-confirm').addEventListener('click', () =
     postNui('managedHorseAction', { action: 'setRiding', horseId: selectedManagedHorseId });
 });
 document.getElementById('wagon-stats-close').addEventListener('click', closeManageModals);
-scaleInputs.forEach((input) => {
-    input.addEventListener('input', () => applyScale(input.value));
+openScaleButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+        applyScale();
+        scaleMenu.hidden = false;
+    });
 });
+closeScaleBtn.addEventListener('click', closeScaleMenu);
+scaleSlider.addEventListener('input', applyScale);
 cameraZoom.addEventListener('input', () => postNui('horseCameraZoom', { zoom: Number(cameraZoom.value) }));
 window.addEventListener('resize', updateScaleLimit);
 
@@ -1704,6 +1743,10 @@ document.addEventListener('pointermove', (event) => {
 
 document.addEventListener('keyup', (event) => {
     if (event.key !== 'Escape') return;
+    if (!scaleMenu.hidden) {
+        closeScaleMenu();
+        return;
+    }
     if (!noHorseStallModal.hidden) {
         closeBuyModal();
         return;

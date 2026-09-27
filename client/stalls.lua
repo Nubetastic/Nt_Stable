@@ -111,7 +111,7 @@ local function SpawnStableHorses(stableName)
                     {
                         name = targetName,
                         icon = 'fas fa-horse',
-                        label = 'View Horse',
+                        label = 'View ' .. HorseStats.Get(horseModel).breed,
                         distance = ConfigStables.Settings.ZoneDistance,
                         onSelect = function()
                             OpenHorseInfo(stableName, horseModel)
