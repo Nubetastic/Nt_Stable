@@ -624,6 +624,14 @@ const openCustomizationCategory = (category) => {
     loadManeTailColors.disabled = !oppositeCategory?.customized;
     if (oppositeCategory) loadManeTailColors.textContent = `Load ${oppositeCategory.label} Colors`;
 
+    const loadMustacheManeColors = document.getElementById('load-mustache-mane-colors');
+    const loadMustacheTailColors = document.getElementById('load-mustache-tail-colors');
+    const isMustache = category.key === 'Mustaches';
+    loadMustacheManeColors.hidden = !isMustache;
+    loadMustacheTailColors.hidden = !isMustache;
+    loadMustacheManeColors.disabled = !customizationOptions.find((option) => option.key === 'Manes')?.customized;
+    loadMustacheTailColors.disabled = !customizationOptions.find((option) => option.key === 'Tails')?.customized;
+
     const selectedModel = category.models
         ? category.models.findIndex((model) => model.values
             ? model.values.includes(category.currentValue)
@@ -667,6 +675,15 @@ const openCustomizationCategory = (category) => {
         const variations = getVariations(model);
         heading.textContent = model ? `${category.label} - ${model.name}` : category.label;
         value.textContent = Number(selection) === 0 ? category.defaultLabel : category.models ? `Model ${selection}` : `Style ${selection}`;
+
+        if (!category.models) {
+            category.currentValue = Number(selection);
+            variationSlider.max = 1;
+            variationSlider.value = 1;
+            variationSlider.disabled = true;
+            variationValue.textContent = 'None';
+            return;
+        }
 
         if (!model) {
             if (useRepresentative) category.currentValue = 0;
@@ -1315,6 +1332,18 @@ window.addEventListener('message', (event) => {
     document.getElementById('breed').textContent = horse.name || horse.breed;
     document.getElementById('breed-summary').textContent = horse.breed;
     document.getElementById('tame-level').textContent = horse.tameLevel;
+    const currentXP = Math.max(0, Math.min(4000, Math.floor(Number(horse.currentXP) || 0)));
+    const levelStartXP = [0, 0, 100, 200, 300, 400, 500, 1000, 2000, 3000, 4000];
+    const level = Math.max(1, Math.min(10, Number(horse.tameLevel) || 1));
+    const nextLevelXP = levelStartXP[level + 1];
+    const earnedThisLevel = currentXP - levelStartXP[level];
+    const requiredThisLevel = nextLevelXP - levelStartXP[level];
+    const levelPercent = level === 10 ? 100 : Math.max(0, Math.min(100, Math.floor((earnedThisLevel / requiredThisLevel) * 100)));
+    const xpUntilNextLevel = level === 10 ? 0 : Math.max(0, nextLevelXP - currentXP);
+    document.getElementById('level-current-xp').textContent = `Current XP: ${currentXP}`;
+    document.getElementById('level-next-xp').textContent = level === 10 ? 'Maximum Level' : `${xpUntilNextLevel} XP Until Next Level`;
+    document.getElementById('level-progress-percent').textContent = `${levelPercent}%`;
+    document.getElementById('level-progress-fill').style.width = `${levelPercent}%`;
     ['health', 'stamina', 'agility', 'speed', 'acceleration', 'strength'].forEach((stat) => renderHorseStat(horse, stat));
     document.getElementById('carry-weight').textContent = `${horse.carryWeight} kg`;
     document.getElementById('pull-weight').textContent = `${horse.pullWeight} kg`;
@@ -1665,10 +1694,9 @@ document.getElementById('component-customize-back').addEventListener('click', ()
     document.getElementById('customize-menu').hidden = false;
     requestAnimationFrame(updateScaleLimit);
 });
-document.getElementById('load-mane-tail-colors').addEventListener('click', () => {
+const loadCustomizationColors = (sourceKey) => {
     if (!selectedCustomizationCategory) return;
 
-    const sourceKey = selectedCustomizationCategory.key === 'Manes' ? 'Tails' : 'Manes';
     const sourceCategory = customizationOptions.find((category) => category.key === sourceKey);
     if (!sourceCategory?.customized) return;
 
@@ -1679,7 +1707,12 @@ document.getElementById('load-mane-tail-colors').addEventListener('click', () =>
         category: selectedCustomizationCategory.key,
         ...selectedCustomizationCategory.tints,
     });
+};
+document.getElementById('load-mane-tail-colors').addEventListener('click', () => {
+    loadCustomizationColors(selectedCustomizationCategory?.key === 'Manes' ? 'Tails' : 'Manes');
 });
+document.getElementById('load-mustache-mane-colors').addEventListener('click', () => loadCustomizationColors('Manes'));
+document.getElementById('load-mustache-tail-colors').addEventListener('click', () => loadCustomizationColors('Tails'));
 document.querySelectorAll('[data-component-tint]').forEach((input) => {
     input.addEventListener('input', () => {
         if (!selectedCustomizationCategory) return;

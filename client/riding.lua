@@ -56,6 +56,7 @@ function ShowOwnedHorseInfo(horseData, returnToManager)
         model = horseData.horse,
         breed = base.breed,
         tameLevel = level,
+        currentXP = tonumber(horseData.horsexp) or 0,
         price = base.price,
         health = finalStats.health,
         stamina = finalStats.stamina,
@@ -102,6 +103,72 @@ local function ClearPlayerHorseState(horse)
     PlayerHorseFleeing = false
     lanternEquipped = false
 end
+
+RegisterNetEvent('nt_stables:client:brushPlayerHorse', function()
+    if PlayerHorse == 0 or not DoesEntityExist(PlayerHorse) then
+        lib.notify({ title = 'You do not have an active horse out.', type = 'error', duration = 7000 })
+        return
+    end
+
+    if #(GetEntityCoords(cache.ped) - GetEntityCoords(PlayerHorse)) > 2.0 then
+        lib.notify({ title = 'You need to be closer to your horse.', type = 'error', duration = 7000 })
+        return
+    end
+
+    Citizen.InvokeNative(0xCD181A959CFDD7F4, cache.ped, PlayerHorse, `INTERACTION_BRUSH`, 0, 0)
+    Wait(8000)
+    if PlayerHorse == 0 or not DoesEntityExist(PlayerHorse) then return end
+
+    Citizen.InvokeNative(0xE3144B932DFDFF65, PlayerHorse, 0.0, -1, 1, 1)
+    ClearPedEnvDirt(PlayerHorse)
+    ClearPedDamageDecalByZone(PlayerHorse, 10, 'ALL')
+    ClearPedBloodDamage(PlayerHorse)
+    Citizen.InvokeNative(0xD8544F6260F5F01E, PlayerHorse, 10)
+    PlaySoundFrontend('Core_Fill_Up', 'Consumption_Sounds', true, 0)
+    TriggerServerEvent('nt_stables:server:addHorseCareTraining', 'grooming')
+end)
+
+RegisterNetEvent('nt_stables:client:feedPlayerHorse', function(itemName)
+    if PlayerHorse == 0 or not DoesEntityExist(PlayerHorse) then
+        lib.notify({ title = 'You do not have an active horse out.', type = 'error', duration = 7000 })
+        return
+    end
+
+    if #(GetEntityCoords(cache.ped) - GetEntityCoords(PlayerHorse)) > 2.0 then
+        lib.notify({ title = 'You need to be closer to your horse.', type = 'error', duration = 7000 })
+        return
+    end
+
+    local feed = Config.HorseFeed[itemName]
+    if not feed then return end
+    if not lib.callback.await('nt_stables:server:consumeHorseFeed', false, itemName) then
+        lib.notify({ title = 'You do not have that horse feed.', type = 'error', duration = 7000 })
+        return
+    end
+
+    if feed.isMedicine then
+        Citizen.InvokeNative(0xCD181A959CFDD7F4, cache.ped, PlayerHorse, -1355254781, 0, 0)
+        TaskAnimalInteraction(cache.ped, PlayerHorse, -1355254781, joaat(feed.medicineHash), 0)
+        Wait(3500)
+    else
+        Citizen.InvokeNative(0xCD181A959CFDD7F4, cache.ped, PlayerHorse, -224471938, 0, 0)
+        Wait(5000)
+    end
+
+    if PlayerHorse == 0 or not DoesEntityExist(PlayerHorse) then return end
+    local horseHealth = tonumber(Citizen.InvokeNative(0x36731AC041289BB1, PlayerHorse, 0)) or 0
+    local horseStamina = tonumber(Citizen.InvokeNative(0x36731AC041289BB1, PlayerHorse, 1)) or 0
+    Citizen.InvokeNative(0xC6258F41D86676E0, PlayerHorse, 0, horseHealth + feed.health)
+    Citizen.InvokeNative(0xC6258F41D86676E0, PlayerHorse, 1, horseStamina + feed.stamina)
+    if feed.isMedicine then
+        Citizen.InvokeNative(0xF6A7C08DF2E28B28, PlayerHorse, 0, 1000.0)
+        Citizen.InvokeNative(0xF6A7C08DF2E28B28, PlayerHorse, 1, 1000.0)
+        Citizen.InvokeNative(0x50C803A4CD5932C5, true)
+        Citizen.InvokeNative(0xD4EE21B7CC7FD350, true)
+    end
+    PlaySoundFrontend('Core_Fill_Up', 'Consumption_Sounds', true, 0)
+    TriggerServerEvent('nt_stables:server:addHorseCareTraining', 'feeding')
+end)
 
 local function DeletePlayerHorse()
     if PlayerHorse == 0 then return end
@@ -155,8 +222,9 @@ local function SetupHorseTarget()
                 return not IsEntityDead(entity)
             end,
             onSelect = function()
-                if not RSGCore.Functions.HasItem('horse_lantern', 1) then
-                    lib.notify({ title = 'You do not have a horse lantern.', type = 'error', duration = 10000 })
+                local hasLantern = lib.callback.await('nt_stables:server:horseInventoryHasItem', false, PlayerHorseData.horseid, 'horse_lantern')
+                if not hasLantern then
+                    lib.notify({ title = 'Your horse does not have a horse lantern.', type = 'error', duration = 10000 })
                     return
                 end
 
@@ -184,6 +252,8 @@ local function SetupHorseTarget()
             end,
     }
     exports.ox_target:addLocalEntity(PlayerHorse, targets)
+    Citizen.InvokeNative(0xA3DB37EDF9A74635, PlayerId(), PlayerHorse, 49, 1, true)
+    Citizen.InvokeNative(0xA3DB37EDF9A74635, PlayerId(), PlayerHorse, 50, 1, true)
 end
 
 local function CreateHorseBlip(horse, horseData)
@@ -328,7 +398,12 @@ local function CallPlayerHorse()
     )
     if not roadSpawn then
         SetModelAsNoLongerNeeded(modelHash)
-        lib.notify({ title = 'No suitable road was found for your horse.', type = 'error', duration = 10000 })
+        lib.notify({
+            title = 'No Road Found',
+            description = 'Move and whistle again.',
+            type = 'error',
+            duration = 10000,
+        })
         return
     end
 
@@ -344,7 +419,7 @@ local function CallPlayerHorse()
     PlayerHorseData = data
     SetEntityAsMissionEntity(PlayerHorse, true, true)
     SetRandomOutfitVariation(PlayerHorse, true)
-    SetBlockingOfNonTemporaryEvents(PlayerHorse, true)
+    SetBlockingOfNonTemporaryEvents(PlayerHorse, false)
     SetPedPromptName(PlayerHorse, data.name)
     SetEntityCanBeDamaged(PlayerHorse, true)
 

@@ -362,7 +362,9 @@ local function ApplyHorseComponents(horse, components)
 
                 local component = value > 0 and HorseComponents[category.key][value]
                 if component then
-                    Citizen.InvokeNative(0xD3A7B003ED343FD9, horse, component.hash, true, true, false)
+                    local isFaceComponent = category.key == 'Masks' or category.key == 'Mustaches'
+                    Citizen.InvokeNative(0xD3A7B003ED343FD9, horse, component.hash, true, true, isFaceComponent)
+                    if isFaceComponent then Citizen.InvokeNative(0x704C908E9C405136, horse) end
                 end
             end
         end
@@ -1115,7 +1117,9 @@ RegisterNUICallback('customizeHorseComponent', function(data, cb)
         Citizen.InvokeNative(0xD710A5007C2AC539, previewHorse, selectedCategory.categoryHash, 0)
 
         if value > 0 then
-            Citizen.InvokeNative(0xD3A7B003ED343FD9, previewHorse, HorseComponents[selectedCategory.key][value].hash, true, true, false)
+            local isFaceComponent = selectedCategory.key == 'Masks' or selectedCategory.key == 'Mustaches'
+            Citizen.InvokeNative(0xD3A7B003ED343FD9, previewHorse, HorseComponents[selectedCategory.key][value].hash, true, true, isFaceComponent)
+            if isFaceComponent then Citizen.InvokeNative(0x704C908E9C405136, previewHorse) end
         end
 
         Citizen.InvokeNative(0xAAB86462966168CE, previewHorse, true)

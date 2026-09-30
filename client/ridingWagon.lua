@@ -683,7 +683,12 @@ local function CallPlayerWagon()
     end
     if not roadSpawn then
         SetModelAsNoLongerNeeded(modelHash)
-        lib.notify({ title = 'No suitable road was found for your wagon.', type = 'error', duration = 10000 })
+        lib.notify({
+            title = 'No Road Found',
+            description = 'Move and whistle again.',
+            type = 'error',
+            duration = 10000,
+        })
         return
     end
 

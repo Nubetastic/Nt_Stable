@@ -317,6 +317,25 @@ ConfigStables.TailModels = {
     { value = 8, name = 'Braided', first = 8, last = 8 },
 }
 
+ConfigStables.MaskModels = {
+    { value = 39, name = 'Model 1', values = { 39, 11, 14, 5, 7, 34, 40, 21, 10, 2 } },
+    { value = 41, name = 'Model 2', values = { 41, 22, 17, 28, 33, 35, 38, 1, 16, 25 } },
+    { value = 42, name = 'Model 3', values = { 42, 3, 13, 18, 23, 26, 31, 9, 6, 4 } },
+    { value = 43, name = 'Model 4', values = { 43, 36, 30, 27, 24, 20, 19, 15, 12, 37 } },
+    { value = 44, name = 'Model 5', values = { 44, 45, 46, 47 } },
+    { value = 48, name = 'Model 6', values = { 48, 49, 50, 51 } },
+    { value = 8, name = 'Model 7', values = { 8 } },
+    { value = 29, name = 'Model 8', values = { 29 } },
+    { value = 32, name = 'Model 9', values = { 32 } },
+}
+
+ConfigStables.MustacheModels = {
+    { value = 1, name = 'Model 1', first = 1, last = 1 },
+    { value = 3, name = 'Model 2', first = 3, last = 3 },
+    { value = 6, name = 'Model 3', first = 6, last = 6 },
+    { value = 7, name = 'Model 4', first = 7, last = 7 },
+}
+
 ConfigStables.Customization = {
     { key = 'Saddles', label = 'Saddle', defaultLabel = 'Bareback', price = 2, categoryHash = 0xBAA7E618, tintKey = 'SaddleTints', tintPalette = 'metaped_tint_horse_leather', models = ConfigStables.SaddleModels },
     { key = 'Blankets', label = 'Blanket', price = 5, categoryHash = 0x17CEB41A, tintKey = 'BlanketTints', tintPalette = 'metaped_tint_horse_leather', models = ConfigStables.BlanketModels },
@@ -325,6 +344,8 @@ ConfigStables.Customization = {
     { key = 'Bedrolls', label = 'Bedroll', price = 5, categoryHash = 0xEFB31921, tintKey = 'BedrollTints', tintPalette = 'metaped_tint_horse_leather', models = ConfigStables.BedrollModels },
     { key = 'Manes', label = 'Mane', defaultLabel = 'Natural', price = 3, categoryHash = 0xAA0217AB, tintKey = 'ManeTints', tintPalette = 'metaped_tint_horse', models = ConfigStables.ManeModels },
     { key = 'Tails', label = 'Tail', defaultLabel = 'Natural', price = 4, categoryHash = 0xA63CAE10, tintKey = 'TailTints', tintPalette = 'metaped_tint_horse', models = ConfigStables.TailModels },
+    { key = 'Masks', label = 'Mask', price = 3, categoryHash = 0xD3500E5D, tintKey = 'MaskTints', tintPalette = 'metaped_tint_horse_leather', models = ConfigStables.MaskModels },
+    { key = 'Mustaches', label = 'Mustache', price = 2, categoryHash = 0x30DEFDDF, tintKey = 'MustacheTints', tintPalette = 'metaped_tint_horse', models = ConfigStables.MustacheModels },
 }
 
 ConfigStables.RidingHorseComponents = {

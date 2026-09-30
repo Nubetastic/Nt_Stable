@@ -30,6 +30,17 @@
                 <div><span>Tame Level</span><strong id="tame-level"></strong></div>
             </div>
 
+            <div class="level-progress">
+                <div class="level-progress-details">
+                    <span id="level-current-xp"></span>
+                    <span id="level-next-xp"></span>
+                    <strong id="level-progress-percent"></strong>
+                </div>
+                <div class="level-progress-track">
+                    <div id="level-progress-fill" class="level-progress-fill"></div>
+                </div>
+            </div>
+
             <h2>Stats</h2>
             <div class="stats">
                 <div class="horse-stat">
@@ -362,6 +373,8 @@
                             <input data-component-tint="tint2" type="range" min="0" max="255" step="1">
                         </label>
                         <button id="load-mane-tail-colors" class="secondary" type="button" hidden disabled>Load Mane/Tail Colors</button>
+                        <button id="load-mustache-mane-colors" class="secondary" type="button" hidden disabled>Load Mane Colors</button>
+                        <button id="load-mustache-tail-colors" class="secondary" type="button" hidden disabled>Load Tail Colors</button>
                     </div>
                 </div>
                 <div id="customize-price-row" class="customize-price-row">

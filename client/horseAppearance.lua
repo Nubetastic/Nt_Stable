@@ -6,6 +6,8 @@ local HORSE_APPEARANCE_CATEGORIES = {
     `horse_bodies`,
     `horse_manes`,
     `horse_tails`,
+    0xD3500E5D,
+    0x30DEFDDF,
     0xEEDC3C76,
 }
 
@@ -110,7 +112,9 @@ local function ApplyStoredComponents(horse, storedComponents)
 
                 local component = value > 0 and HorseComponents[category.key][value]
                 if component then
-                    Citizen.InvokeNative(0xD3A7B003ED343FD9, horse, component.hash, true, true, false)
+                    local isFaceComponent = category.key == 'Masks' or category.key == 'Mustaches'
+                    Citizen.InvokeNative(0xD3A7B003ED343FD9, horse, component.hash, true, true, isFaceComponent)
+                    if isFaceComponent then Citizen.InvokeNative(0x704C908E9C405136, horse) end
                 end
             end
         end

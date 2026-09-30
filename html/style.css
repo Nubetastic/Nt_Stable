@@ -1119,13 +1119,13 @@ footer[data-manage-main] {
 .horse-card {
     position: relative;
     width: min(660px, 90vw);
-    height: min(680px, 88vh);
+    height: 750px;
     padding: 26px;
     border: 1px solid rgba(220, 194, 139, 0.72);
     border-radius: 5px;
     background: linear-gradient(180deg, rgba(28, 24, 18, 0.97), rgba(13, 12, 10, 0.97));
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.68);
-    overflow-y: auto;
+    overflow: hidden;
 }
 
 header,
@@ -1190,6 +1190,42 @@ h2 {
 .summary {
     grid-template-columns: repeat(2, 1fr);
     margin-top: 18px;
+}
+
+.level-progress {
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 2px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(0, 0, 0, 0.15));
+}
+
+.level-progress-details {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+    color: var(--rdr-muted);
+    font-size: 12px;
+}
+
+.level-progress-details strong {
+    color: var(--rdr-text);
+}
+
+.level-progress-track {
+    height: 12px;
+    overflow: hidden;
+    border: 1px solid var(--rdr-gold-dim);
+    background: rgba(0, 0, 0, 0.65);
+}
+
+.level-progress-fill {
+    width: 0;
+    height: 100%;
+    background: linear-gradient(90deg, #8d949a, #b9bec3);
+    transition: width 0.2s ease;
 }
 
 .stats {

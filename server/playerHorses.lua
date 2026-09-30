@@ -1546,6 +1546,62 @@ RegisterSqlEvent('nt_stables:server:openSaddleBag', function(src, horseId)
     })
 end)
 
+RegisterSqlCallback('nt_stables:server:horseInventoryHasItem', function(source, horseId, itemName)
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player then return false end
+    if itemName ~= 'horse_lantern' then return false end
+
+    local horse = MySQL.single.await("SELECT horseid FROM nt_stable_horses WHERE horseid = ? AND citizenid = ? AND active = ? AND location = 'stable'", {
+        horseId,
+        Player.PlayerData.citizenid,
+        1,
+    })
+    if not horse then return false end
+
+    local saddleBagId = 'horse_saddlebag_' .. Player.PlayerData.citizenid
+    exports['rsg-inventory']:CreateInventory(saddleBagId, {})
+    local saddleBag = exports['rsg-inventory']:GetInventory(saddleBagId)
+    for _, item in pairs(saddleBag.items or {}) do
+        if item.name == itemName and item.amount > 0 then return true end
+    end
+
+    return false
+end)
+
+RSGCore.Functions.CreateUseableItem('horse_brush', function(source)
+    TriggerClientEvent('nt_stables:client:brushPlayerHorse', source)
+end)
+
+RSGCore.Functions.CreateUseableItem('horse_carrot', function(source)
+    TriggerClientEvent('nt_stables:client:feedPlayerHorse', source, 'horse_carrot')
+end)
+
+RSGCore.Functions.CreateUseableItem('horse_apple', function(source)
+    TriggerClientEvent('nt_stables:client:feedPlayerHorse', source, 'horse_apple')
+end)
+
+RSGCore.Functions.CreateUseableItem('sugarcube', function(source)
+    TriggerClientEvent('nt_stables:client:feedPlayerHorse', source, 'sugarcube')
+end)
+
+RSGCore.Functions.CreateUseableItem('haysnack', function(source)
+    TriggerClientEvent('nt_stables:client:feedPlayerHorse', source, 'haysnack')
+end)
+
+RSGCore.Functions.CreateUseableItem('horsemeal', function(source)
+    TriggerClientEvent('nt_stables:client:feedPlayerHorse', source, 'horsemeal')
+end)
+
+RSGCore.Functions.CreateUseableItem('horse_stimulant', function(source)
+    TriggerClientEvent('nt_stables:client:feedPlayerHorse', source, 'horse_stimulant')
+end)
+
+RegisterSqlCallback('nt_stables:server:consumeHorseFeed', function(source, itemName)
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player or not Config.HorseFeed[itemName] then return false end
+    return Player.Functions.RemoveItem(itemName, 1)
+end)
+
 RegisterSqlEvent('nt_stables:server:openWagonInventory', function(src, wagonId)
     local Player = RSGCore.Functions.GetPlayer(src)
     if not Player then return end

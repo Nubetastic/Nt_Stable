@@ -1,5 +1,14 @@
 Config = {}
 
+Config.HorseFeed = {
+    horse_carrot = { health = 10, stamina = 10, isMedicine = false },
+    horse_apple = { health = 15, stamina = 15, isMedicine = false },
+    sugarcube = { health = 25, stamina = 25, isMedicine = false },
+    haysnack = { health = 50, stamina = 50, isMedicine = false },
+    horsemeal = { health = 75, stamina = 75, isMedicine = false },
+    horse_stimulant = { health = 100, stamina = 100, isMedicine = true, medicineHash = 'consumable_horse_stimulant' },
+}
+
 Config.StableSlots = {
     AdditionalSlotMultiplier = 1.5,
     SellPriceMultiplier = 0.5,
